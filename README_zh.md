@@ -24,13 +24,13 @@
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/SteveShi/MactermKit.git", from: "1.0.13")
+    .package(url: "https://github.com/SteveShi/MactermKit.git", from: "1.0.15")
 ]
 ```
 
 并在相应的 Target 中依赖 `"MactermKit"`。
 
-*注意：本库底层依赖 `GhosttyKit.xcframework` 二进制静态库。*
+*注意：本库底层依赖 `MactermKitCore.xcframework` 二进制静态库。*
 
 ---
 

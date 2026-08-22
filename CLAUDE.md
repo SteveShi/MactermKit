@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `MactermKit` is a Swift Package that wraps the **Ghostty terminal emulation and rendering core** (written in C/Zig). It provides a macOS-native terminal view with smooth rendering, IME support, theme management, and strict Swift 6 concurrency safety.
 
 The package targets **macOS 15+** and depends on:
-- `GhosttyKit.xcframework` (binary target, C library compiled from upstream Ghostty)
+- `MactermKitCore.xcframework` (binary target, C library compiled from upstream Ghostty)
 - `MSDisplayLink` (for VSYNC-coordinated rendering)
 
 ## Build Commands
@@ -19,19 +19,19 @@ swift build
 # Run tests
 swift test
 
-# Build GhosttyKit.xcframework from upstream Ghostty source
+# Build MactermKitCore.xcframework from upstream Ghostty source
 # Requires Zig 0.15.2 in PATH or at /opt/homebrew/opt/zig@0.15/bin/zig
 ./scripts/build_ghostty.sh <version>  # e.g., v1.3.1
 
 # Compute checksum for binary target (after building xcframework)
-swift package compute-checksum ThirdParty/GhosttyKit.xcframework.zip
+swift package compute-checksum ThirdParty/MactermKitCore.xcframework.zip
 ```
 
 The `build_ghostty.sh` script:
 1. Clones/updates `ghostty-org/ghostty` to `ThirdParty/src/ghostty`
 2. Checks out the specified version tag
 3. Runs `zig build -Dapp-runtime=none -Demit-xcframework=true`
-4. Copies the resulting `GhosttyKit.xcframework` to `ThirdParty/lib/`
+4. Moves and structures the resulting `MactermKitCore.xcframework` in `ThirdParty/lib/`
 
 ## Architecture
 

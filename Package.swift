@@ -19,14 +19,14 @@ let package = Package(
         .target(
             name: "MactermKit",
             dependencies: [
-                "GhosttyKit",
+                "MactermKitCore",
                 .product(name: "MSDisplayLink", package: "MSDisplayLink")
             ]
         ),
         .binaryTarget(
-            name: "GhosttyKit",
-            url: "https://github.com/SteveShi/libghostty-swift/releases/download/v1.0.12/GhosttyKit.xcframework.zip",
-            checksum: "bbefef52e73b1724bf40c3cdb618c4ff7449b7eacd1c46b2f9757ccd730ff2f8"
+            name: "MactermKitCore",
+            url: "https://github.com/SteveShi/MactermKit/releases/download/v1.0.15/MactermKitCore.xcframework.zip",
+            checksum: "47e9aa1947c2bed8bfa705e6de6af7343696e04a45c23ec1f5611e4c3c920552"
         )
     ]
 )

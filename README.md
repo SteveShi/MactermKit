@@ -24,13 +24,13 @@ Add this package to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/SteveShi/MactermKit.git", from: "1.0.13")
+    .package(url: "https://github.com/SteveShi/MactermKit.git", from: "1.0.15")
 ]
 ```
 
 And depend on `"MactermKit"` in your application targets.
 
-*Note: This package internally links the C binary static library `GhosttyKit.xcframework`.*
+*Note: This package internally links the binary static library `MactermKitCore.xcframework`.*
 
 ---
 

@@ -39,7 +39,15 @@ fi
   "$ZIG_BIN" build -Dapp-runtime=none -Demit-xcframework=true -Demit-macos-app=false -Dxcframework-target=native
 )
 
-rm -rf "$OUT_DIR/GhosttyKit.xcframework"
-cp -R "$SRC/macos/GhosttyKit.xcframework" "$OUT_DIR/GhosttyKit.xcframework"
+rm -rf "$OUT_DIR/MactermKitCore.xcframework"
+mv "$SRC/macos/GhosttyKit.xcframework" "$OUT_DIR/MactermKitCore.xcframework"
 
-echo "GhosttyKit.xcframework generated and copied to $OUT_DIR"
+# Update modulemap to MactermKitCore
+cat << 'EOF' > "$OUT_DIR/MactermKitCore.xcframework/macos-arm64/Headers/module.modulemap"
+module MactermKitCore {
+    umbrella header "ghostty.h"
+    export *
+}
+EOF
+
+echo "MactermKitCore.xcframework generated and copied to $OUT_DIR"

@@ -83,16 +83,16 @@ jobs:
 
           chmod +x scripts/*.sh
 
-          # Compile GhosttyKit
+          # Compile MactermKitCore
           ./scripts/build_ghostty.sh "${LATEST_GHOSTTY}"
 
           # Zip framework
           cd ThirdParty/lib
-          zip -qy -r ../GhosttyKit.xcframework.zip GhosttyKit.xcframework
+          zip -qy -r ../MactermKitCore.xcframework.zip MactermKitCore.xcframework
           cd ../..
 
           # Compute checksum
-          CHECKSUM=$(swift package compute-checksum ThirdParty/GhosttyKit.xcframework.zip)
+          CHECKSUM=$(swift package compute-checksum ThirdParty/MactermKitCore.xcframework.zip)
           echo "New Checksum: $CHECKSUM"
 
           CURRENT_PKG_VERSION=$(git tag -l "v*" | sort -V | tail -n 1)
@@ -128,13 +128,13 @@ jobs:
                   .target(
                       name: "MactermKit",
                       dependencies: [
-                          "GhosttyKit",
+                          "MactermKitCore",
                           .product(name: "MSDisplayLink", package: "MSDisplayLink")
                       ]
                   ),
                   .binaryTarget(
-                      name: "GhosttyKit",
-                      url: "https://github.com/SteveShi/MactermKit/releases/download/\${NEXT_PKG_VERSION}/GhosttyKit.xcframework.zip",
+                      name: "MactermKitCore",
+                      url: "https://github.com/SteveShi/MactermKit/releases/download/\${NEXT_PKG_VERSION}/MactermKitCore.xcframework.zip",
                       checksum: "\${CHECKSUM}"
                   )
               ]
@@ -152,6 +152,6 @@ jobs:
           git push origin main
 
           # Create Release and upload asset
-          gh release create "${NEXT_PKG_VERSION}" ThirdParty/GhosttyKit.xcframework.zip \
+          gh release create "${NEXT_PKG_VERSION}" ThirdParty/MactermKitCore.xcframework.zip \
             --title "${NEXT_PKG_VERSION}" \
             --notes "Automatically compiled with Ghostty ${LATEST_GHOSTTY}"

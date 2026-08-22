@@ -1,5 +1,5 @@
 import AppKit
-import GhosttyKit
+import MactermKitCore
 
 public extension NSEvent {
     func ghosttyKeyEvent(_ action: ghostty_input_action_e) -> ghostty_input_key_s {

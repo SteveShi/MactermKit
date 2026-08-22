@@ -1,6 +1,6 @@
 import AppKit
 import Foundation
-import GhosttyKit
+import MactermKitCore
 import MSDisplayLink
 
 // Use a top-level function for the C callback to ensure NO implicit actor isolation.

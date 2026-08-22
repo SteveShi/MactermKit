@@ -1,6 +1,6 @@
 import AppKit
 import Foundation
-import GhosttyKit
+import MactermKitCore
 
 @MainActor
 public class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
