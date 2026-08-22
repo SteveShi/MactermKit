@@ -1,8 +1,8 @@
-# libghostty-swift 中文文档
+# MactermKit 中文文档
 
 [English](README.md)
 
-`libghostty-swift` 是一个高内聚的 **Ghostty 终端模拟与渲染核心** 的 Swift Package 封装包。
+`MactermKit` 是一个高内聚的 **Ghostty 终端模拟与渲染核心** 的 Swift Package 封装包。
 
 它解耦了原生的终端仿真实现，提供了平滑的渲染更新、中文输入法（IME）原生支持、配色主题扩展，并完全兼容 Swift 6 的并发安全规范。
 
@@ -24,13 +24,13 @@
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/SteveShi/libghostty-swift.git", from: "1.0.0")
+    .package(url: "https://github.com/SteveShi/MactermKit.git", from: "1.0.13")
 ]
 ```
 
-并在相应的 Target 中依赖 `"libghostty-swift"`。
+并在相应的 Target 中依赖 `"MactermKit"`。
 
-*注意：本库底层依赖 `GhosttyKit.xcframework` 二进制静态库，运行时需要客户端 App 链接并嵌入 `libghostty-vt.dylib` 动态库。*
+*注意：本库底层依赖 `GhosttyKit.xcframework` 二进制静态库。*
 
 ---
 

@@ -2,14 +2,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "libghostty-swift",
+    name: "MactermKit",
     platforms: [
         .macOS(.v15)
     ],
     products: [
         .library(
-  name: "libghostty-swift",
-  targets: ["libghostty-swift"]
+            name: "MactermKit",
+            targets: ["MactermKit"]
         )
     ],
     dependencies: [
@@ -17,16 +17,16 @@ let package = Package(
     ],
     targets: [
         .target(
-  name: "libghostty-swift",
-  dependencies: [
-      "GhosttyKit",
-      .product(name: "MSDisplayLink", package: "MSDisplayLink")
-  ]
+            name: "MactermKit",
+            dependencies: [
+                "GhosttyKit",
+                .product(name: "MSDisplayLink", package: "MSDisplayLink")
+            ]
         ),
         .binaryTarget(
-  name: "GhosttyKit",
-  url: "https://github.com/SteveShi/libghostty-swift/releases/download/v1.0.12/GhosttyKit.xcframework.zip",
-  checksum: "bbefef52e73b1724bf40c3cdb618c4ff7449b7eacd1c46b2f9757ccd730ff2f8"
+            name: "GhosttyKit",
+            url: "https://github.com/SteveShi/libghostty-swift/releases/download/v1.0.12/GhosttyKit.xcframework.zip",
+            checksum: "bbefef52e73b1724bf40c3cdb618c4ff7449b7eacd1c46b2f9757ccd730ff2f8"
         )
     ]
 )

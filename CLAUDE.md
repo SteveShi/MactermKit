@@ -4,12 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`libghostty-swift` is a Swift Package that wraps the **Ghostty terminal emulation and rendering core** (written in C/Zig). It provides a macOS-native terminal view with smooth rendering, IME support, theme management, and strict Swift 6 concurrency safety.
+`MactermKit` is a Swift Package that wraps the **Ghostty terminal emulation and rendering core** (written in C/Zig). It provides a macOS-native terminal view with smooth rendering, IME support, theme management, and strict Swift 6 concurrency safety.
 
 The package targets **macOS 15+** and depends on:
 - `GhosttyKit.xcframework` (binary target, C library compiled from upstream Ghostty)
 - `MSDisplayLink` (for VSYNC-coordinated rendering)
-- Runtime dependency: `libghostty-vt.dylib` (must be linked by client applications)
 
 ## Build Commands
 

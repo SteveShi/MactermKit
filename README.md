@@ -1,8 +1,8 @@
-# libghostty-swift
+# MactermKit
 
 [中文版](README_zh.md)
 
-`libghostty-swift` is a highly cohesive Swift Package wrapper for the **Ghostty terminal emulation and rendering core**.
+`MactermKit` is a highly cohesive Swift Package wrapper for the **Ghostty terminal emulation and rendering core**.
 
 It decouples the native terminal simulation implementation, providing smooth rendering updates, native support for Chinese Input Method Editor (IME), configuration color theme expansions, and conforms strictly to the Swift 6 Concurrency safety specification.
 
@@ -24,13 +24,13 @@ Add this package to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/SteveShi/libghostty-swift.git", from: "1.0.0")
+    .package(url: "https://github.com/SteveShi/MactermKit.git", from: "1.0.13")
 ]
 ```
 
-And depend on `"libghostty-swift"` in your application targets.
+And depend on `"MactermKit"` in your application targets.
 
-*Note: This package internally links the C binary static library `GhosttyKit.xcframework` and requires the client application to link and embed the `libghostty-vt.dylib` dynamic library at runtime.*
+*Note: This package internally links the C binary static library `GhosttyKit.xcframework`.*
 
 ---
 
