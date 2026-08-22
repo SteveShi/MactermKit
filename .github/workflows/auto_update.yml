@@ -111,14 +111,14 @@ jobs:
           import PackageDescription
 
           let package = Package(
-              name: "libghostty-swift",
+              name: "MactermKit",
               platforms: [
                   .macOS(.v15)
               ],
               products: [
                   .library(
-                      name: "libghostty-swift",
-                      targets: ["libghostty-swift"]
+                      name: "MactermKit",
+                      targets: ["MactermKit"]
                   )
               ],
               dependencies: [
@@ -126,7 +126,7 @@ jobs:
               ],
               targets: [
                   .target(
-                      name: "libghostty-swift",
+                      name: "MactermKit",
                       dependencies: [
                           "GhosttyKit",
                           .product(name: "MSDisplayLink", package: "MSDisplayLink")
@@ -134,8 +134,8 @@ jobs:
                   ),
                   .binaryTarget(
                       name: "GhosttyKit",
-                      url: "https://github.com/SteveShi/libghostty-swift/releases/download/${NEXT_PKG_VERSION}/GhosttyKit.xcframework.zip",
-                      checksum: "${CHECKSUM}"
+                      url: "https://github.com/SteveShi/MactermKit/releases/download/\${NEXT_PKG_VERSION}/GhosttyKit.xcframework.zip",
+                      checksum: "\${CHECKSUM}"
                   )
               ]
           )
