@@ -204,6 +204,9 @@ public final class GhosttyRuntime: DisplayLinkDelegate {
     /// (bell, app-requested desktop notification, child process exit).
     public var onTerminalEvent: ((GhosttyTerminalEvent) -> Void)?
 
+    /// Invoked on the main thread when a terminal surface gains first-responder focus.
+    public var onSurfaceFocused: (() -> Void)?
+
     /// Weak registry of live surface views keyed by their pointer address, used
     /// to resolve C callbacks safely across threads without dereferencing a raw
     /// (potentially dangling) pointer.

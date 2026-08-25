@@ -66,6 +66,7 @@ public class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         if result, let surface = surface {
             ghostty_surface_set_focus(surface, true)
             runtime.activeSurface = surface
+            runtime.onSurfaceFocused?()
         }
         return result
     }
@@ -633,6 +634,50 @@ extension GhosttySurfaceView {
             }
         }
         return nil
+    }
+
+    /// Reads the entire scrollback buffer and active screen content as plain text.
+    public func readFullText(maxLines: Int = 10000) -> String? {
+        guard let surface = surface else { return nil }
+
+        let topLeft = ghostty_point_s(
+            tag: GHOSTTY_POINT_SCREEN,
+            coord: GHOSTTY_POINT_COORD_TOP_LEFT,
+            x: 0,
+            y: 0
+        )
+        let bottomRight = ghostty_point_s(
+            tag: GHOSTTY_POINT_SCREEN,
+            coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT,
+            x: 0,
+            y: 0
+        )
+        let selection = ghostty_selection_s(
+            top_left: topLeft,
+            bottom_right: bottomRight,
+            rectangle: false
+        )
+
+        var textStruct = ghostty_text_s()
+        guard ghostty_surface_read_text(surface, selection, &textStruct) else { return nil }
+        defer {
+            ghostty_surface_free_text(surface, &textStruct)
+        }
+
+        guard let textPtr = textStruct.text else { return nil }
+        guard let fullText = String(
+            bytes: UnsafeRawBufferPointer(start: textPtr, count: Int(textStruct.text_len)),
+            encoding: .utf8
+        ) else { return nil }
+
+        let trimmed = fullText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let lines = fullText.components(separatedBy: "\n")
+        if lines.count > maxLines {
+            return lines.suffix(maxLines).joined(separator: "\n")
+        }
+        return fullText
     }
 
     public func selectedRange() -> NSRange {
