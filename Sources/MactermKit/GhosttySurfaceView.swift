@@ -78,6 +78,7 @@ public class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
             if runtime.activeSurface == surface {
                 runtime.activeSurface = nil
             }
+            runtime.onSurfaceResigned?()
         }
         return result
     }
