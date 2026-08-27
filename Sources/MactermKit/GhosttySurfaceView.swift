@@ -474,10 +474,14 @@ public class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         ghostty_surface_set_content_scale(surface, xScale, yScale)
     }
 
+    private var lastReportedSize: CGSize = .zero
+
     private func updateSurfaceSize() {
         guard let surface = surface else { return }
         let size = convertToBacking(bounds.size)
         guard size.width > 0, size.height > 0 else { return }
+        guard size != lastReportedSize else { return }
+        lastReportedSize = size
         ghostty_surface_set_size(surface, UInt32(size.width), UInt32(size.height))
     }
 
@@ -642,13 +646,13 @@ extension GhosttySurfaceView {
         guard let surface = surface else { return nil }
 
         let topLeft = ghostty_point_s(
-            tag: GHOSTTY_POINT_SCREEN,
+            tag: GHOSTTY_POINT_SURFACE,
             coord: GHOSTTY_POINT_COORD_TOP_LEFT,
             x: 0,
             y: 0
         )
         let bottomRight = ghostty_point_s(
-            tag: GHOSTTY_POINT_SCREEN,
+            tag: GHOSTTY_POINT_SURFACE,
             coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT,
             x: 0,
             y: 0
