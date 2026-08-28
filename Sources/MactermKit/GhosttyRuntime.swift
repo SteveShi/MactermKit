@@ -23,6 +23,17 @@ private func ghostty_wakeup_callback(userdata: UnsafeMutableRawPointer?) {
     }
 }
 
+private func getPasteboardString() -> String? {
+    let pasteboard = NSPasteboard.general
+    if let text = pasteboard.string(forType: .string) {
+        return text
+    }
+    if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty {
+        return urls.map { $0.path }.joined(separator: " ")
+    }
+    return nil
+}
+
 private func ghostty_read_clipboard_callback(
     userdata: UnsafeMutableRawPointer?,
     clipboard: ghostty_clipboard_e,
@@ -44,13 +55,9 @@ private func ghostty_read_clipboard_callback(
         guard let surfaceView = GhosttyRuntime.shared.surfaceView(forKey: viewAddress),
               let surface = surfaceView.rawSurface else { return }
         
-        let pasteboard = NSPasteboard.general
-        if let text = pasteboard.string(forType: .string) {
-            text.withCString { cStr in
-                ghostty_surface_complete_clipboard_request(surface, cStr, reqPtr, true)
-            }
-        } else {
-            ghostty_surface_complete_clipboard_request(surface, nil, reqPtr, false)
+        let text = getPasteboardString() ?? ""
+        text.withCString { cStr in
+            ghostty_surface_complete_clipboard_request(surface, cStr, reqPtr, !text.isEmpty)
         }
     }
     return true
@@ -72,7 +79,9 @@ private func ghostty_confirm_read_clipboard_callback(
         
         let runtime = Unmanaged<GhosttyRuntime>.fromOpaque(runtimePtr).takeUnretainedValue()
         guard let surface = runtime.activeSurface else {
-            ghostty_surface_complete_clipboard_request(nil, nil, reqPtr, false)
+            "".withCString { cStr in
+                ghostty_surface_complete_clipboard_request(nil, cStr, reqPtr, false)
+            }
             return
         }
         
@@ -84,16 +93,14 @@ private func ghostty_confirm_read_clipboard_callback(
         
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
-            let pasteboard = NSPasteboard.general
-            if let text = pasteboard.string(forType: .string) {
-                text.withCString { cStr in
-                    ghostty_surface_complete_clipboard_request(surface, cStr, reqPtr, true)
-                }
-            } else {
-                ghostty_surface_complete_clipboard_request(surface, nil, reqPtr, false)
+            let text = getPasteboardString() ?? ""
+            text.withCString { cStr in
+                ghostty_surface_complete_clipboard_request(surface, cStr, reqPtr, !text.isEmpty)
             }
         } else {
-            ghostty_surface_complete_clipboard_request(surface, nil, reqPtr, false)
+            "".withCString { cStr in
+                ghostty_surface_complete_clipboard_request(surface, cStr, reqPtr, false)
+            }
         }
     }
 }

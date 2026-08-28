@@ -334,6 +334,9 @@ public class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         let pasteboard = NSPasteboard.general
         if let text = pasteboard.string(forType: .string) {
             writeText(text)
+        } else if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty {
+            let pathString = urls.map { $0.path }.joined(separator: " ")
+            writeText(pathString)
         }
     }
 
