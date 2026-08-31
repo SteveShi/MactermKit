@@ -649,13 +649,13 @@ extension GhosttySurfaceView {
         guard let surface = surface else { return nil }
 
         let topLeft = ghostty_point_s(
-            tag: GHOSTTY_POINT_SURFACE,
+            tag: GHOSTTY_POINT_ACTIVE,
             coord: GHOSTTY_POINT_COORD_TOP_LEFT,
             x: 0,
             y: 0
         )
         let bottomRight = ghostty_point_s(
-            tag: GHOSTTY_POINT_SURFACE,
+            tag: GHOSTTY_POINT_ACTIVE,
             coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT,
             x: 0,
             y: 0
