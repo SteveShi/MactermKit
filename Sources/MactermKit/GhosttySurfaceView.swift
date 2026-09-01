@@ -478,14 +478,28 @@ public class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     private var lastReportedSize: CGSize = .zero
+    private var resizeDebounceWork: DispatchWorkItem?
 
     private func updateSurfaceSize() {
-        guard let surface = surface else { return }
+        guard surface != nil else { return }
         let size = convertToBacking(bounds.size)
         guard size.width > 0, size.height > 0 else { return }
         guard size != lastReportedSize else { return }
-        lastReportedSize = size
-        ghostty_surface_set_size(surface, UInt32(size.width), UInt32(size.height))
+
+        // Cancel any pending debounced resize to coalesce rapid changes
+        // (e.g. SwiftUI .inspector() panel open/close animation)
+        resizeDebounceWork?.cancel()
+
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, let surface = self.surface else { return }
+            let finalSize = self.convertToBacking(self.bounds.size)
+            guard finalSize.width > 0, finalSize.height > 0 else { return }
+            guard finalSize != self.lastReportedSize else { return }
+            self.lastReportedSize = finalSize
+            ghostty_surface_set_size(surface, UInt32(finalSize.width), UInt32(finalSize.height))
+        }
+        resizeDebounceWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
     }
 
     public func applyTheme(_ theme: GhosttyThemeDefinition) {
