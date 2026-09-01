@@ -38,6 +38,7 @@ public class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         super.init(frame: .zero)
         wantsLayer = true
         setAccessibilityRole(.textArea)
+        registerForDraggedTypes([.fileURL, .string])
         setupSurfaceIfPossible()
     }
 
@@ -330,14 +331,60 @@ public class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         pasteboard.setString(selectedText, forType: .string)
     }
     
+    public static func shellEscapePath(_ path: String) -> String {
+        let specialCharacters = CharacterSet(charactersIn: " \t\n\r\"'\\()[]{}*?~&|;<>`$#!^")
+        if path.rangeOfCharacter(from: specialCharacters) == nil {
+            return path
+        }
+        var result = ""
+        for char in path {
+            if String(char).rangeOfCharacter(from: specialCharacters) != nil {
+                result.append("\\")
+            }
+            result.append(char)
+        }
+        return result
+    }
+
     @objc public func pasteAction(_ sender: Any) {
         let pasteboard = NSPasteboard.general
         if let text = pasteboard.string(forType: .string) {
             writeText(text)
         } else if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty {
-            let pathString = urls.map { $0.path }.joined(separator: " ")
+            let pathString = urls.map { Self.shellEscapePath($0.path) }.joined(separator: " ")
             writeText(pathString)
         }
+    }
+
+    // MARK: - Drag and Drop (NSDraggingDestination)
+
+    override public func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        if isReadOnly { return [] }
+        let pboard = sender.draggingPasteboard
+        if pboard.canReadObject(forClasses: [NSURL.self], options: nil) ||
+           pboard.availableType(from: [.fileURL, .string]) != nil {
+            return .copy
+        }
+        return []
+    }
+
+    override public func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        if isReadOnly { return [] }
+        return .copy
+    }
+
+    override public func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        if isReadOnly { return false }
+        let pboard = sender.draggingPasteboard
+        if let urls = pboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty {
+            let pathString = urls.map { Self.shellEscapePath($0.path) }.joined(separator: " ")
+            writeText(pathString)
+            return true
+        } else if let str = pboard.string(forType: .string), !str.isEmpty {
+            writeText(str)
+            return true
+        }
+        return false
     }
 
     override public func otherMouseDown(with event: NSEvent) {
