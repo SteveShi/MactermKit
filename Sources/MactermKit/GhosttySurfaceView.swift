@@ -121,53 +121,96 @@ public class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         guard let surface = surface else { return }
         
         let hasControlModifiers = event.modifierFlags.contains(.command) || event.modifierFlags.contains(.control)
-        
         let isControlKey = Self.terminalControlKeyCodes.contains(event.keyCode)
+        let markedTextBefore = self.hasMarkedText()
         
-        let isWritingPreedit = self.hasMarkedText()
-        if isWritingPreedit || (!isControlKey && !hasControlModifiers) {
-            self.accumulatedTexts = []
-            self.interpretedCommandSelector = nil
-            
-            self.interpretKeyEvents([event])
-            
-            let collected = self.accumulatedTexts
-            self.accumulatedTexts = nil
-            
-            if let collectedText = collected, !collectedText.isEmpty {
-                for text in collectedText {
-                    text.withCString { cStr in
-                        ghostty_surface_text(surface, cStr, UInt(text.utf8.count))
-                    }
-                }
-                NSAccessibility.post(element: self, notification: .valueChanged)
-                return
-            }
-            
-            if self.interpretedCommandSelector != nil {
-                self.interpretedCommandSelector = nil
-                if !isWritingPreedit {
-                    sendDirectKey(event, to: surface)
-                }
-                NSAccessibility.post(element: self, notification: .valueChanged)
-                return
-            }
-            
+        // If not in preedit, and this is a control key or command/ctrl shortcut,
+        // bypass interpretKeyEvents to prevent macOS text system from intercepting it.
+        if !markedTextBefore && (isControlKey || hasControlModifiers) {
+            sendDirectKey(event, to: surface)
+            NSAccessibility.post(element: self, notification: .valueChanged)
             return
         }
         
-        sendDirectKey(event, to: surface)
+        self.accumulatedTexts = []
+        self.interpretedCommandSelector = nil
+        
+        self.interpretKeyEvents([event])
+        
+        let collected = self.accumulatedTexts
+        self.accumulatedTexts = nil
+        
+        // Case 1: Preedit was active and has now been committed by IME
+        if markedTextBefore, let collectedText = collected, !collectedText.isEmpty {
+            for text in collectedText {
+                sendCommittedText(text, to: surface)
+            }
+            NSAccessibility.post(element: self, notification: .valueChanged)
+            return
+        }
+        
+        // Case 2: Normal typing committed text through IME / text system
+        if let collectedText = collected, !collectedText.isEmpty {
+            for text in collectedText {
+                sendKeyWithText(text, event: event, to: surface)
+            }
+            NSAccessibility.post(element: self, notification: .valueChanged)
+            return
+        }
+        
+        // Case 3: An interpreted command selector was triggered
+        if self.interpretedCommandSelector != nil {
+            self.interpretedCommandSelector = nil
+            if !self.hasMarkedText() {
+                sendDirectKey(event, to: surface)
+            }
+            NSAccessibility.post(element: self, notification: .valueChanged)
+            return
+        }
+        
+        // Case 4: interpretKeyEvents produced no text and no command selector.
+        // If we're not composing IME preedit text, send the key directly so it is never dropped!
+        if !self.hasMarkedText() {
+            sendDirectKey(event, to: surface)
+        }
+        
         NSAccessibility.post(element: self, notification: .valueChanged)
     }
     
     private func sendDirectKey(_ event: NSEvent, to surface: ghostty_surface_t) {
-        var keyEvent = event.ghosttyKeyEvent(GHOSTTY_ACTION_PRESS)
+        let action = event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS
+        var keyEvent = event.ghosttyKeyEvent(action)
         if let text = event.ghosttyCharacters {
             text.withCString { cString in
                 keyEvent.text = cString
                 ghostty_surface_key(surface, keyEvent)
             }
         } else {
+            ghostty_surface_key(surface, keyEvent)
+        }
+    }
+
+    private func sendKeyWithText(_ text: String, event: NSEvent, to surface: ghostty_surface_t) {
+        let action = event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS
+        var keyEvent = event.ghosttyKeyEvent(action)
+        text.withCString { cString in
+            keyEvent.text = cString
+            ghostty_surface_key(surface, keyEvent)
+        }
+    }
+
+    private func sendCommittedText(_ text: String, to surface: ghostty_surface_t) {
+        var keyEvent = ghostty_input_key_s()
+        keyEvent.action = GHOSTTY_ACTION_PRESS
+        keyEvent.keycode = 0
+        keyEvent.text = nil
+        keyEvent.composing = false
+        keyEvent.mods = GHOSTTY_MODS_NONE
+        keyEvent.consumed_mods = GHOSTTY_MODS_NONE
+        keyEvent.unshifted_codepoint = 0
+
+        text.withCString { cString in
+            keyEvent.text = cString
             ghostty_surface_key(surface, keyEvent)
         }
     }
@@ -644,9 +687,7 @@ extension GhosttySurfaceView {
         if accumulatedTexts != nil {
             accumulatedTexts?.append(text)
         } else {
-            text.withCString { cStr in
-                ghostty_surface_text(surface, cStr, UInt(text.utf8.count))
-            }
+            sendCommittedText(text, to: surface)
         }
         NSAccessibility.post(element: self, notification: .valueChanged)
     }
