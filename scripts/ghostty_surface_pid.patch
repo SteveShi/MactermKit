@@ -1,0 +1,106 @@
+diff --git a/include/ghostty.h b/include/ghostty.h
+index 40ff55c9b..df608b9b7 100644
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -1080,6 +1080,7 @@ ghostty_surface_config_s ghostty_surface_inherited_config(ghostty_surface_t, gho
+ void ghostty_surface_update_config(ghostty_surface_t, ghostty_config_t);
+ bool ghostty_surface_needs_confirm_quit(ghostty_surface_t);
+ bool ghostty_surface_process_exited(ghostty_surface_t);
++int32_t ghostty_surface_pid(ghostty_surface_t);
+ void ghostty_surface_refresh(ghostty_surface_t);
+ void ghostty_surface_draw(ghostty_surface_t);
+ void ghostty_surface_set_content_scale(ghostty_surface_t, double, double);
+diff --git a/src/Surface.zig b/src/Surface.zig
+index 4d66622e3..cd6c5615d 100644
+--- a/src/Surface.zig
++++ b/src/Surface.zig
+@@ -773,6 +773,12 @@ pub fn init(
+     app.first = false;
+ }
+ 
++/// Returns the pid of the child process running in this surface, if any.
++/// Best-effort; may return null before the process starts or after cleanup.
++pub fn childPid(self: *Surface) ?std.posix.pid_t {
++    return self.io.childPid();
++}
++
+ pub fn deinit(self: *Surface) void {
+     // Stop search thread
+     if (self.search) |*s| s.deinit();
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+index 0d5a4f8da..dcc0c8658 100644
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -1598,6 +1598,13 @@ pub const CAPI = struct {
+         return surface.core_surface.child_exited;
+     }
+ 
++    /// Returns the pid of the child process running in the surface, or 0
++    /// if it is not available (not yet started or already cleaned up).
++    export fn ghostty_surface_pid(surface: *Surface) c_int {
++        const pid = surface.core_surface.childPid();
++        return if (pid) |p| @intCast(p) else 0;
++    }
++
+     /// Returns true if the surface has a selection.
+     export fn ghostty_surface_has_selection(surface: *Surface) bool {
+         return surface.core_surface.hasSelection();
+diff --git a/src/termio/Exec.zig b/src/termio/Exec.zig
+index af4df3fef..ed56451ec 100644
+--- a/src/termio/Exec.zig
++++ b/src/termio/Exec.zig
+@@ -58,6 +58,18 @@ pub fn deinit(self: *Exec) void {
+     self.subprocess.deinit();
+ }
+ 
++/// Returns the pid of the running child process, if one is running.
++/// This is best-effort: it returns null before the process starts and
++/// after it has been cleaned up. The value is written once by the IO
++/// thread during spawn and never mutated afterwards.
++pub fn childPid(self: *Exec) ?posix.pid_t {
++    const process = self.subprocess.process orelse return null;
++    switch (process) {
++        .fork_exec => |cmd| return cmd.pid,
++        .flatpak => return null,
++    }
++}
++
+ /// Call to initialize the terminal state as necessary for this backend.
+ /// This is called before any termio begins. This should not be called
+ /// after termio begins because it may put the internal terminal state
+diff --git a/src/termio/Termio.zig b/src/termio/Termio.zig
+index dcd0d8cf7..1ac70a7a2 100644
+--- a/src/termio/Termio.zig
++++ b/src/termio/Termio.zig
+@@ -70,6 +70,12 @@ last_cursor_reset: ?std.time.Instant = null,
+ /// to keep track of any state or if its already been freed.
+ thread_enter_state: ?*ThreadEnterState = null,
+ 
++/// Returns the pid of the running child process, if available.
++/// Best-effort; see Exec.childPid for caveats.
++pub fn childPid(self: *Termio) ?posix.pid_t {
++    return self.backend.childPid();
++}
++
+ /// The state we need to keep around only until we enter the IO
+ /// thread. Then we can throw it all away.
+ const ThreadEnterState = struct {
+diff --git a/src/termio/backend.zig b/src/termio/backend.zig
+index ae0e2004f..7778b86b0 100644
+--- a/src/termio/backend.zig
++++ b/src/termio/backend.zig
+@@ -29,6 +29,14 @@ pub const Backend = union(Kind) {
+         }
+     }
+ 
++    /// Returns the pid of the running child process, if available.
++    /// Best-effort; see Exec.childPid for caveats.
++    pub fn childPid(self: *Backend) ?posix.pid_t {
++        switch (self.*) {
++            .exec => |*exec| return exec.childPid(),
++        }
++    }
++
+     pub fn initTerminal(self: *Backend, t: *terminal.Terminal) void {
+         switch (self.*) {
+             .exec => |*exec| exec.initTerminal(t),

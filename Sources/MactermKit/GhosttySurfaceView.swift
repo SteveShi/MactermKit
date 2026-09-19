@@ -17,6 +17,16 @@ public class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         surface
     }
 
+    /// The pid of the child process running in this surface's PTY, if available.
+    /// Best-effort: returns nil before the child spawns or after it is cleaned up.
+    /// Requires the patched MactermKitCore build (ghostty_surface_pid).
+    @available(macOS 15.0, *)
+    public var ptyPID: pid_t? {
+        guard let surface = rawSurface else { return nil }
+        let pid = ghostty_surface_pid(surface)
+        return pid > 0 ? pid : nil
+    }
+
     private static let fallbackBackingScaleFactor: CGFloat = 2.0
 
     private static let terminalControlKeyCodes: Set<UInt16> = [

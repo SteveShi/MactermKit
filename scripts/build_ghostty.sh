@@ -18,6 +18,18 @@ fi
 echo "Checking out Ghostty version $VERSION..."
 git -C "$SRC" checkout "$VERSION"
 
+# Apply MactermKit-specific patches (e.g. ghostty_surface_pid for exposing
+# the PTY child pid). Idempotent: skipped if already applied.
+PATCH_FILE="$ROOT/scripts/ghostty_surface_pid.patch"
+if [[ -f "$PATCH_FILE" ]]; then
+  if git -C "$SRC" apply --check "$PATCH_FILE" 2>/dev/null; then
+    git -C "$SRC" apply "$PATCH_FILE"
+    echo "Applied patch: $PATCH_FILE"
+  else
+    echo "Patch not applicable (already applied or version mismatch), skipping"
+  fi
+fi
+
 ZIG_BIN="${ZIG_BIN:-}"
 if [[ -z "$ZIG_BIN" && -x /opt/homebrew/opt/zig@0.15/bin/zig ]]; then
   ZIG_BIN="/opt/homebrew/opt/zig@0.15/bin/zig"

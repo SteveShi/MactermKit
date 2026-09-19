@@ -25,8 +25,8 @@ let package = Package(
         ),
         .binaryTarget(
             name: "MactermKitCore",
-            url: "https://github.com/SteveShi/MactermKit/releases/download/v1.0.15/MactermKitCore.xcframework.zip",
-            checksum: "47e9aa1947c2bed8bfa705e6de6af7343696e04a45c23ec1f5611e4c3c920552"
+            url: "https://github.com/SteveShi/MactermKit/releases/download/v1.0.24/MactermKitCore.xcframework.zip",
+            checksum: "b82fb365aefd5c7f20d46d416368215fcc16fa798a0eb2270e13a13497d0b90c"
         )
     ]
 )
