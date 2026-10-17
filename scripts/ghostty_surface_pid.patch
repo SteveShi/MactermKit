@@ -1,5 +1,5 @@
 diff --git a/include/ghostty.h b/include/ghostty.h
-index 40ff55c9b..df608b9b7 100644
+index 40ff55c9b..7e6893697 100644
 --- a/include/ghostty.h
 +++ b/include/ghostty.h
 @@ -1080,6 +1080,7 @@ ghostty_surface_config_s ghostty_surface_inherited_config(ghostty_surface_t, gho
@@ -10,8 +10,18 @@ index 40ff55c9b..df608b9b7 100644
  void ghostty_surface_refresh(ghostty_surface_t);
  void ghostty_surface_draw(ghostty_surface_t);
  void ghostty_surface_set_content_scale(ghostty_surface_t, double, double);
+@@ -1130,6 +1131,9 @@ bool ghostty_surface_read_selection(ghostty_surface_t, ghostty_text_s*);
+ bool ghostty_surface_read_text(ghostty_surface_t,
+                                ghostty_selection_s,
+                                ghostty_text_s*);
++bool ghostty_surface_read_vt_text(ghostty_surface_t,
++                                  ghostty_selection_s,
++                                  ghostty_text_s*);
+ void ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*);
+ 
+ #ifdef __APPLE__
 diff --git a/src/Surface.zig b/src/Surface.zig
-index 4d66622e3..cd6c5615d 100644
+index 4d66622e3..af9b14014 100644
 --- a/src/Surface.zig
 +++ b/src/Surface.zig
 @@ -773,6 +773,12 @@ pub fn init(
@@ -27,8 +37,44 @@ index 4d66622e3..cd6c5615d 100644
  pub fn deinit(self: *Surface) void {
      // Stop search thread
      if (self.search) |*s| s.deinit();
+@@ -1890,6 +1896,35 @@ pub fn dumpText(
+     return try self.dumpTextLocked(alloc, sel);
+ }
+ 
++/// Same as `dumpTextLocked` but formats with VT (ANSI SGR escape sequences)
++/// so styled text, colors, and attributes are preserved.
++pub fn dumpTextVtLocked(
++    self: *Surface,
++    alloc: Allocator,
++    sel: terminal.Selection,
++) !Text {
++    const ScreenFormatter = terminal.formatter.ScreenFormatter;
++    var aw: std.Io.Writer.Allocating = .init(alloc);
++    defer aw.deinit();
++
++    var formatter: ScreenFormatter = .init(self.io.terminal.screens.active, .{
++        .emit = .vt,
++        .unwrap = true,
++        .trim = false,
++        .background = self.io.terminal.colors.background.get(),
++        .foreground = self.io.terminal.colors.foreground.get(),
++        .palette = &self.io.terminal.colors.palette.current,
++    });
++    formatter.content = .{ .selection = sel };
++    try formatter.format(&aw.writer);
++
++    const text = try aw.toOwnedSliceSentinel(0);
++    return .{
++        .text = text,
++        .viewport = null,
++    };
++}
++
+ /// Same as `dumpText` but assumes the renderer state mutex is already
+ /// held.
+ pub fn dumpTextLocked(
 diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
-index 0d5a4f8da..dcc0c8658 100644
+index 0d5a4f8da..82b40fe68 100644
 --- a/src/apprt/embedded.zig
 +++ b/src/apprt/embedded.zig
 @@ -1598,6 +1598,13 @@ pub const CAPI = struct {
@@ -45,6 +91,79 @@ index 0d5a4f8da..dcc0c8658 100644
      /// Returns true if the surface has a selection.
      export fn ghostty_surface_has_selection(surface: *Surface) bool {
          return surface.core_surface.hasSelection();
+@@ -1675,7 +1682,58 @@ pub const CAPI = struct {
+         return true;
+     }
+ 
+-    export fn ghostty_surface_free_text(ptr: *Text) void {
++    /// Read arbitrary text with VT (ANSI SGR escape sequences) formatting from the surface.
++    export fn ghostty_surface_read_vt_text(
++        surface: *Surface,
++        sel: Selection,
++        result: *Text,
++    ) bool {
++        surface.core_surface.renderer_state.mutex.lock();
++        defer surface.core_surface.renderer_state.mutex.unlock();
++
++        const core_sel = sel.core(
++            surface.core_surface.renderer_state.terminal.screens.active,
++        ) orelse return false;
++
++        return readVtTextLocked(surface, core_sel, result);
++    }
++
++    fn readVtTextLocked(
++        surface: *Surface,
++        core_sel: terminal.Selection,
++        result: *Text,
++    ) bool {
++        const core_surface = &surface.core_surface;
++
++        const text = core_surface.dumpTextVtLocked(
++            global.alloc,
++            core_sel,
++        ) catch |err| {
++            log.warn("error reading vt text err={}", .{err});
++            return false;
++        };
++
++        const vp: CoreSurface.Text.Viewport = text.viewport orelse .{
++            .tl_px_x = -1,
++            .tl_px_y = -1,
++            .offset_start = 0,
++            .offset_len = 0,
++        };
++
++        result.* = .{
++            .tl_px_x = vp.tl_px_x,
++            .tl_px_y = vp.tl_px_y,
++            .offset_start = vp.offset_start,
++            .offset_len = vp.offset_len,
++            .text = text.text.ptr,
++            .text_len = text.text.len,
++        };
++
++        return true;
++    }
++
++    export fn ghostty_surface_free_text(surface: ?*anyopaque, ptr: *Text) void {
++        _ = surface;
+         ptr.deinit();
+     }
+ 
+diff --git a/src/build/LibtoolStep.zig b/src/build/LibtoolStep.zig
+index d2b514927..cb15d9960 100644
+--- a/src/build/LibtoolStep.zig
++++ b/src/build/LibtoolStep.zig
+@@ -31,7 +31,7 @@ pub fn create(b: *std.Build, opts: Options) *LibtoolStep {
+     const self = b.allocator.create(LibtoolStep) catch @panic("OOM");
+ 
+     const run_step = RunStep.create(b, b.fmt("libtool {s}", .{opts.name}));
+-    run_step.addArgs(&.{ "libtool", "-static", "-o" });
++    run_step.addArgs(&.{ b.graph.zig_exe, "ar", "-qcsL", "--format=darwin" });
+     const output = run_step.addOutputFileArg(opts.out_name);
+     for (opts.sources) |source| run_step.addFileArg(source);
+ 
 diff --git a/src/termio/Exec.zig b/src/termio/Exec.zig
 index af4df3fef..ed56451ec 100644
 --- a/src/termio/Exec.zig

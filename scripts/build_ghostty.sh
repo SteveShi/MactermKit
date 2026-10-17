@@ -12,7 +12,7 @@ mkdir -p "$ROOT/ThirdParty/src" "$OUT_DIR"
 if [[ ! -d "$SRC" ]]; then
   git clone https://github.com/ghostty-org/ghostty.git "$SRC"
 else
-  git -C "$SRC" fetch --tags
+  git -C "$SRC" fetch --tags --force
 fi
 
 echo "Checking out Ghostty version $VERSION..."

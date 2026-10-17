@@ -76,6 +76,12 @@ public class GhosttySurfaceView: NSView, NSTextInputClient {
     
     /// Applies a theme at runtime (dynamic hot-swap)
     public func applyTheme(_ theme: GhosttyThemeDefinition)
+    
+    /// Reads the entire scrollback buffer and active screen content as plain text
+    public func readFullText(maxLines: Int = 10000) -> String?
+    
+    /// Reads the entire scrollback buffer and active screen content with VT formatting (ANSI SGR escape sequences)
+    public func readFullVTText(maxLines: Int = 10000) -> String?
 }
 ```
 

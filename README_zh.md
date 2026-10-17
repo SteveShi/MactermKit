@@ -76,6 +76,12 @@ public class GhosttySurfaceView: NSView, NSTextInputClient {
     
     /// 运行时动态应用新主题（热切换配色）
     public func applyTheme(_ theme: GhosttyThemeDefinition)
+    
+    /// 读取完整的回滚缓冲区（Scrollback）与活跃屏幕文本（纯文本格式）
+    public func readFullText(maxLines: Int = 10000) -> String?
+    
+    /// 读取完整的回滚缓冲区与活跃屏幕文本（保留 ANSI SGR / VT 样式转义序列）
+    public func readFullVTText(maxLines: Int = 10000) -> String?
 }
 ```
 
