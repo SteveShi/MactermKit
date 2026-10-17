@@ -147,7 +147,7 @@ private func ghostty_write_clipboard_callback(
 }
 
 /// Terminal events surfaced from Ghostty's action callback that a host app may
-/// want to react to (e.g. system notifications).
+/// want to react to (e.g. system notifications, CWD updates, title changes).
 public enum GhosttyTerminalEvent: Sendable {
     /// A program rang the terminal bell (BEL).
     case bell
@@ -155,6 +155,14 @@ public enum GhosttyTerminalEvent: Sendable {
     case desktopNotification(title: String, body: String)
     /// The surface's child process exited with the given code.
     case childExited(exitCode: UInt32)
+    /// The current working directory changed (OSC 7).
+    case currentDirectoryChanged(url: String)
+    /// The terminal window title changed (OSC 0 / OSC 2).
+    case titleChanged(title: String)
+    /// The terminal tab title changed.
+    case tabTitleChanged(title: String)
+    /// A command finished executing (OSC 133 D).
+    case commandFinished(exitCode: Int16, durationNs: UInt64)
 }
 
 /// Top-level C action callback (no actor isolation — may be invoked from
@@ -178,11 +186,31 @@ private func ghostty_action_callback(
         event = .bell
     case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
         event = .childExited(exitCode: action.action.child_exited.exit_code)
+    case GHOSTTY_ACTION_PWD:
+        let pwd = action.action.pwd.pwd.map { String(cString: $0) } ?? ""
+        event = .currentDirectoryChanged(url: pwd)
+    case GHOSTTY_ACTION_SET_TITLE:
+        let title = action.action.set_title.title.map { String(cString: $0) } ?? ""
+        event = .titleChanged(title: title)
+    case GHOSTTY_ACTION_SET_TAB_TITLE:
+        let title = action.action.set_tab_title.title.map { String(cString: $0) } ?? ""
+        event = .tabTitleChanged(title: title)
+    case GHOSTTY_ACTION_COMMAND_FINISHED:
+        let finished = action.action.command_finished
+        event = .commandFinished(exitCode: finished.exit_code, durationNs: finished.duration)
     default:
         return false
     }
 
+    var targetSurfaceKey: Int? = nil
+    if target.tag == GHOSTTY_TARGET_SURFACE, let surface = target.target.surface {
+        targetSurfaceKey = Int(bitPattern: surface)
+    }
+
     DispatchQueue.main.async {
+        if let targetSurfaceKey, let view = GhosttyRuntime.shared.surfaceView(forHandleKey: targetSurfaceKey) {
+            view.onEvent?(event)
+        }
         GhosttyRuntime.shared.onTerminalEvent?(event)
     }
     return true
@@ -261,6 +289,8 @@ public final class GhosttyRuntime: DisplayLinkDelegate {
 
     // MARK: - Surface view registry
 
+    private var surfaceHandles: [Int: WeakSurfaceView] = [:]
+
     func registerSurfaceView(_ view: GhosttySurfaceView, forKey key: Int) {
         surfaceViews[key] = WeakSurfaceView(view)
     }
@@ -271,6 +301,20 @@ public final class GhosttyRuntime: DisplayLinkDelegate {
 
     func surfaceView(forKey key: Int) -> GhosttySurfaceView? {
         surfaceViews[key]?.value
+    }
+
+    func registerSurfaceHandle(_ handle: ghostty_surface_t, forView view: GhosttySurfaceView) {
+        let key = Int(bitPattern: handle)
+        surfaceHandles[key] = WeakSurfaceView(view)
+    }
+
+    func unregisterSurfaceHandle(_ handle: ghostty_surface_t) {
+        let key = Int(bitPattern: handle)
+        surfaceHandles.removeValue(forKey: key)
+    }
+
+    func surfaceView(forHandleKey key: Int) -> GhosttySurfaceView? {
+        surfaceHandles[key]?.value
     }
 
     nonisolated public func synchronization(context: DisplayLinkCallbackContext) {

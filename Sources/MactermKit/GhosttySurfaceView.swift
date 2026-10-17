@@ -27,6 +27,9 @@ public class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         return pid > 0 ? pid : nil
     }
 
+    /// Invoked on the main thread when a terminal event specific to this surface occurs.
+    public var onEvent: ((GhosttyTerminalEvent) -> Void)?
+
     private static let fallbackBackingScaleFactor: CGFloat = 2.0
 
     private static let terminalControlKeyCodes: Set<UInt16> = [
@@ -65,6 +68,7 @@ public class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
             }
             runtime.unregisterSurfaceView(forKey: key)
             if let surfaceToFree {
+                runtime.unregisterSurfaceHandle(surfaceToFree)
                 ghostty_surface_free(surfaceToFree)
             }
         }
@@ -550,8 +554,9 @@ public class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         }
 
         // Register for cross-thread C callbacks only once a surface exists.
-        if surface != nil {
+        if let surface {
             runtime.registerSurfaceView(self, forKey: registryKey)
+            runtime.registerSurfaceHandle(surface, forView: self)
         }
     }
 
