@@ -82,20 +82,17 @@ private func ghostty_wakeup_callback(userdata: UnsafeMutableRawPointer?) {
     DispatchQueue.main.async {
         let opaque = UnsafeMutableRawPointer(bitPattern: bitPattern)!
         let runtime = Unmanaged<GhosttyRuntime>.fromOpaque(opaque).takeUnretainedValue()
-        runtime.setPendingTick()  // Now safe on @MainActor
+        runtime.appTick()  // Safely and immediately tick on @MainActor
     }
 }
 ```
 
 ### Rendering Flow
 
-1. Ghostty's C renderer detects changes and calls `ghostty_wakeup_callback` from a background thread
-2. Callback dispatches to main queue and calls `GhosttyRuntime.setPendingTick()`
-3. `MSDisplayLink` fires on next VSYNC
-4. `GhosttyRuntime.appTick()` calls `ghostty_app_tick()` to render pending frames
-5. Ghostty draws into the Metal layer of `GhosttySurfaceView`
-
-This eliminates CPU spin-wait and synchronizes with the display's refresh rate (e.g., 120Hz).
+1. Ghostty's C renderer detects changes and calls `ghostty_wakeup_callback` from a background thread.
+2. Callback dispatches directly to the main queue to execute `GhosttyRuntime.appTick()`, immediately draining the PTY pipe and processing terminal events without delay.
+3. `MSDisplayLink` coordinates with VSYNC to drive smooth cursor blink and animation ticks.
+4. Ghostty renders into the Metal layer of `GhosttySurfaceView`.
 
 ### Auto-Update Workflow
 

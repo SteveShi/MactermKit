@@ -849,6 +849,20 @@ extension GhosttySurfaceView {
         return fullText
     }
 
+    /// Executes a Ghostty binding action by its string name (e.g. "clear_screen", "reset").
+    @discardableResult
+    public func performBindingAction(_ action: String) -> Bool {
+        guard let surface = surface else { return false }
+        return action.withCString { cStr in
+            ghostty_surface_binding_action(surface, cStr, UInt(action.utf8.count))
+        }
+    }
+
+    /// Clears the terminal screen and its scrollback buffer immediately.
+    public func clearScreen() {
+        _ = performBindingAction("clear_screen")
+    }
+
     public func selectedRange() -> NSRange {
         if let selectedText = self.selectedText {
             return NSRange(location: 0, length: selectedText.utf16.count)

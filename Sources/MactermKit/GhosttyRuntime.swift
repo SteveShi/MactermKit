@@ -19,7 +19,7 @@ private func ghostty_wakeup_callback(userdata: UnsafeMutableRawPointer?) {
         
         // Now on the main thread, we can safely re-acquire the GhosttyRuntime (which is @MainActor)
         let runtime = Unmanaged<GhosttyRuntime>.fromOpaque(opaque).takeUnretainedValue()
-        runtime.setPendingTick()
+        runtime.appTick()
     }
 }
 
@@ -251,7 +251,6 @@ public final class GhosttyRuntime: DisplayLinkDelegate {
     private var surfaceViews: [Int: WeakSurfaceView] = [:]
     
     private let displayLink = DisplayLink()
-    private var pendingTick = false
 
     private init() {
         _ = ghostty_init(0, nil)
@@ -284,7 +283,7 @@ public final class GhosttyRuntime: DisplayLinkDelegate {
     }
 
     public func setPendingTick() {
-        pendingTick = true
+        appTick()
     }
 
     // MARK: - Surface view registry
@@ -319,10 +318,7 @@ public final class GhosttyRuntime: DisplayLinkDelegate {
 
     nonisolated public func synchronization(context: DisplayLinkCallbackContext) {
         Task { @MainActor in
-            if pendingTick {
-                pendingTick = false
-                appTick()
-            }
+            appTick()
         }
     }
 
