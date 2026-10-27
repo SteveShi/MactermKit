@@ -501,8 +501,7 @@ public class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     override public func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
         if isReadOnly { return [] }
         let pboard = sender.draggingPasteboard
-        if pboard.canReadObject(forClasses: [NSURL.self], options: nil) ||
-           pboard.availableType(from: [.fileURL, .string]) != nil {
+        if pboard.availableType(from: [.fileURL, .string, .URL]) != nil {
             return .copy
         }
         return []

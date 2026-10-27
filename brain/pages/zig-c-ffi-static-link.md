@@ -4,7 +4,7 @@ title: Statically link libghostty Zig engine
 category: decision
 status: active
 created: "2026-08-21T06:38:37"
-updated: "2026-10-28T03:14:41"
+updated: "2026-10-28T03:40:27"
 ---
 
 <!-- compiled_truth -->
@@ -28,4 +28,9 @@ Precompiled Zig libghostty into static archive `libghostty.a` and wrapped with s
 - time: 2026-10-28T03:14:41
   kind: decision
   summary: "Upgraded to Ghostty v1.4.0 (Zig 0.17.0) in MactermKit v1.0.28: patched C-ABI to bridge OSC 7501 Program Status Protocol end-to-end (query reply, GHOSTTY_ACTION_PROGRAM_STATUS, RIS clear), updated clipboard callbacks for binary-safe multi-MIME OSC 5522, and exposed foregroundProcessID, ttyName, pasteText, setOccluded, and setColorScheme."
+  affects: [zig-c-ffi-static-link]
+
+- time: 2026-10-28T03:40:27
+  kind: note
+  summary: Fix Swift 6 strict concurrency pasteboard check in v1.0.30 by replacing nonisolated canReadObject with availableType
   affects: [zig-c-ffi-static-link]
