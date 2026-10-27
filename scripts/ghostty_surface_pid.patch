@@ -1,44 +1,97 @@
 diff --git a/include/ghostty.h b/include/ghostty.h
-index 40ff55c9b..7e6893697 100644
+index 9a12b9cad..dfed0942d 100644
 --- a/include/ghostty.h
 +++ b/include/ghostty.h
-@@ -1080,6 +1080,7 @@ ghostty_surface_config_s ghostty_surface_inherited_config(ghostty_surface_t, gho
- void ghostty_surface_update_config(ghostty_surface_t, ghostty_config_t);
- bool ghostty_surface_needs_confirm_quit(ghostty_surface_t);
- bool ghostty_surface_process_exited(ghostty_surface_t);
-+int32_t ghostty_surface_pid(ghostty_surface_t);
- void ghostty_surface_refresh(ghostty_surface_t);
- void ghostty_surface_draw(ghostty_surface_t);
- void ghostty_surface_set_content_scale(ghostty_surface_t, double, double);
-@@ -1130,6 +1131,9 @@ bool ghostty_surface_read_selection(ghostty_surface_t, ghostty_text_s*);
- bool ghostty_surface_read_text(ghostty_surface_t,
-                                ghostty_selection_s,
-                                ghostty_text_s*);
-+bool ghostty_surface_read_vt_text(ghostty_surface_t,
-+                                  ghostty_selection_s,
-+                                  ghostty_text_s*);
- void ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*);
+@@ -1016,8 +1016,39 @@ typedef enum {
+   GHOSTTY_ACTION_COPY_TITLE_TO_CLIPBOARD,
+   GHOSTTY_ACTION_MOVE_TAB_TO_NEW_WINDOW,
+   GHOSTTY_ACTION_RESIZE_WINDOW,
++  GHOSTTY_ACTION_PROGRAM_STATUS,
+ } ghostty_action_tag_e;
+ 
++typedef enum {
++  GHOSTTY_ACTION_PROGRAM_STATUS_STATE_IDLE = 0,
++  GHOSTTY_ACTION_PROGRAM_STATUS_STATE_WORKING = 1,
++  GHOSTTY_ACTION_PROGRAM_STATUS_STATE_DONE = 2,
++  GHOSTTY_ACTION_PROGRAM_STATUS_STATE_BLOCKED = 3,
++  GHOSTTY_ACTION_PROGRAM_STATUS_STATE_ERROR = 4,
++  GHOSTTY_ACTION_PROGRAM_STATUS_STATE_CLEAR = 5,
++} ghostty_action_program_status_state_e;
++
++typedef enum {
++  GHOSTTY_ACTION_PROGRAM_STATUS_KIND_NONE = -1,
++  GHOSTTY_ACTION_PROGRAM_STATUS_KIND_PERMISSION = 0,
++  GHOSTTY_ACTION_PROGRAM_STATUS_KIND_QUESTION = 1,
++  GHOSTTY_ACTION_PROGRAM_STATUS_KIND_AUTH = 2,
++} ghostty_action_program_status_kind_e;
++
++typedef struct {
++  ghostty_action_program_status_state_e state;
++  ghostty_action_program_status_kind_e kind;
++  int16_t progress;
++  const char* id;
++  const char* app;
++  const char* title;
++  const char* msg;
++} ghostty_action_program_status_report_s;
++
++typedef struct {
++  const ghostty_action_program_status_report_s* report;
++} ghostty_action_program_status_s;
++
+ typedef union {
+   ghostty_action_split_direction_e new_split;
+   ghostty_action_fullscreen_e toggle_fullscreen;
+@@ -1060,6 +1091,7 @@ typedef union {
+   ghostty_action_search_selected_s search_selected;
+   ghostty_action_readonly_e readonly;
+   ghostty_action_open_config_e open_config;
++  ghostty_action_program_status_s program_status;
+ } ghostty_action_u;
+ 
+ typedef struct {
+@@ -1192,6 +1224,7 @@ GHOSTTY_API void ghostty_surface_set_occlusion(ghostty_surface_t, bool);
+ GHOSTTY_API void ghostty_surface_set_size(ghostty_surface_t, uint32_t, uint32_t);
+ GHOSTTY_API ghostty_surface_size_s ghostty_surface_size(ghostty_surface_t);
+ GHOSTTY_API uint64_t ghostty_surface_foreground_pid(ghostty_surface_t);
++GHOSTTY_API uint64_t ghostty_surface_pid(ghostty_surface_t);
+ GHOSTTY_API ghostty_string_s ghostty_surface_tty_name(ghostty_surface_t);
+ GHOSTTY_API void ghostty_surface_set_color_scheme(ghostty_surface_t,
+                                                      ghostty_color_scheme_e);
+@@ -1239,6 +1272,9 @@ GHOSTTY_API bool ghostty_surface_read_selection(ghostty_surface_t, ghostty_text_
+ GHOSTTY_API bool ghostty_surface_read_text(ghostty_surface_t,
+                                               ghostty_selection_s,
+                                               ghostty_text_s*);
++GHOSTTY_API bool ghostty_surface_read_vt_text(ghostty_surface_t,
++                                              ghostty_selection_s,
++                                              ghostty_text_s*);
+ GHOSTTY_API void ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*);
  
  #ifdef __APPLE__
 diff --git a/src/Surface.zig b/src/Surface.zig
-index 4d66622e3..af9b14014 100644
+index 369bb2399..6853199dd 100644
 --- a/src/Surface.zig
 +++ b/src/Surface.zig
-@@ -773,6 +773,12 @@ pub fn init(
-     app.first = false;
- }
+@@ -1063,6 +1063,17 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
  
-+/// Returns the pid of the child process running in this surface, if any.
-+/// Best-effort; may return null before the process starts or after cleanup.
-+pub fn childPid(self: *Surface) ?std.posix.pid_t {
-+    return self.io.childPid();
-+}
+         .resize_window => |size| try self.resizeWindow(size),
+ 
++        .program_status => |ps| {
++            defer ps.destroy();
++            _ = self.rt_app.performAction(
++                .{ .surface = self },
++                .program_status,
++                ps.toAction(),
++            ) catch |err| {
++                log.warn("apprt failed to report program status err={}", .{err});
++            };
++        },
 +
- pub fn deinit(self: *Surface) void {
-     // Stop search thread
-     if (self.search) |*s| s.deinit();
-@@ -1890,6 +1896,35 @@ pub fn dumpText(
-     return try self.dumpTextLocked(alloc, sel);
+         .color_change => |change| color_change: {
+             // Notify our apprt, but don't send a mode 2031 DSR report
+             // because VT sequences were used to change the color.
+@@ -2156,6 +2167,35 @@ pub fn dumpTextLocked(
+     };
  }
  
 +/// Same as `dumpTextLocked` but formats with VT (ANSI SGR escape sequences)
@@ -70,40 +123,127 @@ index 4d66622e3..af9b14014 100644
 +    };
 +}
 +
- /// Same as `dumpText` but assumes the renderer state mutex is already
- /// held.
- pub fn dumpTextLocked(
+ /// Returns true if the terminal has a selection.
+ pub fn hasSelection(self: *const Surface) bool {
+     self.renderer_state.mutex.lockUncancelable(global.io());
+@@ -6679,6 +6719,11 @@ pub fn getProcessInfo(self: *Surface, comptime info: ProcessInfo) ?ProcessInfo.T
+     return self.io.getProcessInfo(info);
+ }
+ 
++/// Returns the pid of the child process running in this surface, if any.
++pub fn getChildPid(self: *Surface) u64 {
++    return self.io.getChildPid();
++}
++
+ test "queueIo frees allocated writes in readonly mode" {
+     const testing = std.testing;
+ 
+diff --git a/src/apprt/action.zig b/src/apprt/action.zig
+index 708898e76..be10e2c96 100644
+--- a/src/apprt/action.zig
++++ b/src/apprt/action.zig
+@@ -364,6 +364,9 @@ pub const Action = union(Key) {
+     /// split or the window is fullscreen.
+     resize_window: ResizeWindow,
+ 
++    /// Report program status (OSC 7501).
++    program_status: ProgramStatus,
++
+     /// Sync with: ghostty_action_tag_e
+     pub const Key = enum(c_int) {
+         quit,
+@@ -436,6 +439,7 @@ pub const Action = union(Key) {
+         copy_title_to_clipboard,
+         move_tab_to_new_window,
+         resize_window,
++        program_status,
+ 
+         test "ghostty.h Action.Key" {
+             try lib.checkGhosttyHEnum(Key, "GHOSTTY_ACTION_");
+@@ -1084,6 +1088,67 @@ pub const OpenConfig = enum(c_int) {
+     }
+ };
+ 
++/// OSC 7501 Program Status Action
++pub const ProgramStatus = struct {
++    pub const State = enum(c_int) {
++        idle = 0,
++        working = 1,
++        done = 2,
++        blocked = 3,
++        @"error" = 4,
++        clear = 5,
++
++        test "ghostty.h ProgramStatus.State" {
++            try lib.checkGhosttyHEnum(State, "GHOSTTY_ACTION_PROGRAM_STATUS_STATE_");
++        }
++    };
++
++    pub const Kind = enum(c_int) {
++        none = -1,
++        permission = 0,
++        question = 1,
++        auth = 2,
++
++        test "ghostty.h ProgramStatus.Kind" {
++            try lib.checkGhosttyHEnum(Kind, "GHOSTTY_ACTION_PROGRAM_STATUS_KIND_");
++        }
++    };
++
++    pub const ReportC = extern struct {
++        state: State,
++        kind: Kind,
++        progress: i16,
++        id: [*:0]const u8,
++        app: [*:0]const u8,
++        title: [*:0]const u8,
++        msg: [*:0]const u8,
++    };
++
++    pub const C = extern struct {
++        report: *const ReportC,
++    };
++
++    pub const Heap = struct {
++        arena: std.heap.ArenaAllocator,
++        report_c: ReportC,
++
++        pub fn destroy(self: *Heap) void {
++            var arena = self.arena;
++            arena.deinit();
++        }
++
++        pub fn toAction(self: *const Heap) ProgramStatus {
++            return .{ .report = &self.report_c };
++        }
++    };
++
++    report: *const ReportC,
++
++    pub fn cval(self: ProgramStatus) C {
++        return .{ .report = self.report };
++    }
++};
++
+ test {
+     _ = compat_testing.refAllDeclsRecursive(@This());
+ }
 diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
-index 0d5a4f8da..82b40fe68 100644
+index 697f0a786..5b1ad7176 100644
 --- a/src/apprt/embedded.zig
 +++ b/src/apprt/embedded.zig
-@@ -1598,6 +1598,13 @@ pub const CAPI = struct {
-         return surface.core_surface.child_exited;
-     }
- 
-+    /// Returns the pid of the child process running in the surface, or 0
-+    /// if it is not available (not yet started or already cleaned up).
-+    export fn ghostty_surface_pid(surface: *Surface) c_int {
-+        const pid = surface.core_surface.childPid();
-+        return if (pid) |p| @intCast(p) else 0;
-+    }
-+
-     /// Returns true if the surface has a selection.
-     export fn ghostty_surface_has_selection(surface: *Surface) bool {
-         return surface.core_surface.hasSelection();
-@@ -1675,7 +1682,58 @@ pub const CAPI = struct {
+@@ -1976,6 +1976,56 @@ pub const CAPI = struct {
          return true;
      }
  
--    export fn ghostty_surface_free_text(ptr: *Text) void {
 +    /// Read arbitrary text with VT (ANSI SGR escape sequences) formatting from the surface.
 +    export fn ghostty_surface_read_vt_text(
 +        surface: *Surface,
 +        sel: Selection,
 +        result: *Text,
 +    ) bool {
-+        surface.core_surface.renderer_state.mutex.lock();
-+        defer surface.core_surface.renderer_state.mutex.unlock();
++        surface.core_surface.renderer_state.mutex.lockUncancelable(global.io());
++        defer surface.core_surface.renderer_state.mutex.unlock(global.io());
 +
 +        const core_sel = sel.core(
 +            surface.core_surface.renderer_state.terminal.screens.active,
@@ -120,7 +260,7 @@ index 0d5a4f8da..82b40fe68 100644
 +        const core_surface = &surface.core_surface;
 +
 +        const text = core_surface.dumpTextVtLocked(
-+            global.alloc,
++            global.alloc(),
 +            core_sel,
 +        ) catch |err| {
 +            log.warn("error reading vt text err={}", .{err});
@@ -146,80 +286,233 @@ index 0d5a4f8da..82b40fe68 100644
 +        return true;
 +    }
 +
-+    export fn ghostty_surface_free_text(surface: ?*anyopaque, ptr: *Text) void {
-+        _ = surface;
+     export fn ghostty_surface_free_text(_: *Surface, ptr: *Text) void {
          ptr.deinit();
      }
+@@ -2015,6 +2065,11 @@ pub const CAPI = struct {
+         return surface.core_surface.getProcessInfo(.foreground_pid) orelse 0;
+     }
  
-diff --git a/src/build/LibtoolStep.zig b/src/build/LibtoolStep.zig
-index d2b514927..cb15d9960 100644
---- a/src/build/LibtoolStep.zig
-+++ b/src/build/LibtoolStep.zig
-@@ -31,7 +31,7 @@ pub fn create(b: *std.Build, opts: Options) *LibtoolStep {
-     const self = b.allocator.create(LibtoolStep) catch @panic("OOM");
- 
-     const run_step = RunStep.create(b, b.fmt("libtool {s}", .{opts.name}));
--    run_step.addArgs(&.{ "libtool", "-static", "-o" });
-+    run_step.addArgs(&.{ b.graph.zig_exe, "ar", "-qcsL", "--format=darwin" });
-     const output = run_step.addOutputFileArg(opts.out_name);
-     for (opts.sources) |source| run_step.addFileArg(source);
- 
-diff --git a/src/termio/Exec.zig b/src/termio/Exec.zig
-index af4df3fef..ed56451ec 100644
---- a/src/termio/Exec.zig
-+++ b/src/termio/Exec.zig
-@@ -58,6 +58,18 @@ pub fn deinit(self: *Exec) void {
-     self.subprocess.deinit();
- }
- 
-+/// Returns the pid of the running child process, if one is running.
-+/// This is best-effort: it returns null before the process starts and
-+/// after it has been cleaned up. The value is written once by the IO
-+/// thread during spawn and never mutated afterwards.
-+pub fn childPid(self: *Exec) ?posix.pid_t {
-+    const process = self.subprocess.process orelse return null;
-+    switch (process) {
-+        .fork_exec => |cmd| return cmd.pid,
-+        .flatpak => return null,
++    /// Returns the PID of the child (root shell) process for the surface PTY.
++    export fn ghostty_surface_pid(surface: *Surface) u64 {
++        return surface.core_surface.getChildPid();
 +    }
-+}
 +
- /// Call to initialize the terminal state as necessary for this backend.
- /// This is called before any termio begins. This should not be called
- /// after termio begins because it may put the internal terminal state
-diff --git a/src/termio/Termio.zig b/src/termio/Termio.zig
-index dcd0d8cf7..1ac70a7a2 100644
---- a/src/termio/Termio.zig
-+++ b/src/termio/Termio.zig
-@@ -70,6 +70,12 @@ last_cursor_reset: ?std.time.Instant = null,
- /// to keep track of any state or if its already been freed.
- thread_enter_state: ?*ThreadEnterState = null,
+     /// Returns the PTY name for the surface. The returned string must be
+     /// freed by the caller via ghostty_string_free.
+     export fn ghostty_surface_tty_name(surface: *Surface) String {
+diff --git a/src/apprt/surface.zig b/src/apprt/surface.zig
+index 3b1a04d8a..1d5af3b07 100644
+--- a/src/apprt/surface.zig
++++ b/src/apprt/surface.zig
+@@ -109,6 +109,9 @@ pub const Message = union(enum) {
+     /// Show a desktop notification.
+     desktop_notification: DesktopNotification,
  
-+/// Returns the pid of the running child process, if available.
-+/// Best-effort; see Exec.childPid for caveats.
-+pub fn childPid(self: *Termio) ?posix.pid_t {
-+    return self.backend.childPid();
-+}
++    /// Report program status (OSC 7501) to the surface.
++    program_status: *apprt.action.ProgramStatus.Heap,
 +
- /// The state we need to keep around only until we enter the IO
- /// thread. Then we can throw it all away.
- const ThreadEnterState = struct {
-diff --git a/src/termio/backend.zig b/src/termio/backend.zig
-index ae0e2004f..7778b86b0 100644
---- a/src/termio/backend.zig
-+++ b/src/termio/backend.zig
-@@ -29,6 +29,14 @@ pub const Backend = union(Kind) {
+     /// Health status change for the renderer.
+     renderer_health: renderer.Health,
+ 
+diff --git a/src/build/SharedDeps.zig b/src/build/SharedDeps.zig
+index 8f4e23954..f4481d958 100644
+--- a/src/build/SharedDeps.zig
++++ b/src/build/SharedDeps.zig
+@@ -690,7 +690,7 @@ pub fn add(
+ 
+         switch (self.config.app_runtime) {
+             .none => {},
+-            .gtk => try self.addGtk(step),
++            .gtk => if (comptime !builtin.target.os.tag.isDarwin()) try self.addGtk(step),
          }
      }
  
+diff --git a/src/termio/Exec.zig b/src/termio/Exec.zig
+index df57e0f4f..bf19813ee 100644
+--- a/src/termio/Exec.zig
++++ b/src/termio/Exec.zig
+@@ -1264,6 +1264,15 @@ const Subprocess = struct {
+         const pty = &(self.pty orelse return null);
+         return pty.getProcessInfo(info);
+     }
++
 +    /// Returns the pid of the running child process, if available.
-+    /// Best-effort; see Exec.childPid for caveats.
-+    pub fn childPid(self: *Backend) ?posix.pid_t {
-+        switch (self.*) {
-+            .exec => |*exec| return exec.childPid(),
++    pub fn getChildPid(self: *Subprocess) u64 {
++        const process = self.process orelse return 0;
++        return switch (process) {
++            .fork_exec => |cmd| if (cmd.pid) |pid| (if (pid > 0) @intCast(pid) else 0) else 0,
++            .flatpak => 0,
++        };
++    }
+ };
+ 
+ /// The read thread works with a companion gather thread to form a two-stage
+@@ -2063,6 +2072,11 @@ pub fn getProcessInfo(self: *Exec, comptime info: ProcessInfo) ?ProcessInfo.Type
+     return self.subprocess.getProcessInfo(info);
+ }
+ 
++/// Returns the pid of the running child process, if available.
++pub fn getChildPid(self: *Exec) u64 {
++    return self.subprocess.getChildPid();
++}
++
+ test "execCommand darwin: shell command" {
+     if (comptime !builtin.target.os.tag.isDarwin()) return error.SkipZigTest;
+ 
+diff --git a/src/termio/Termio.zig b/src/termio/Termio.zig
+index 49bd6e0cd..b9b8e1ceb 100644
+--- a/src/termio/Termio.zig
++++ b/src/termio/Termio.zig
+@@ -857,3 +857,8 @@ pub const ThreadData = struct {
+ pub fn getProcessInfo(self: *Termio, comptime info: ProcessInfo) ?ProcessInfo.Type(info) {
+     return self.backend.getProcessInfo(info);
+ }
++
++/// Returns the pid of the running child process, if available.
++pub fn getChildPid(self: *Termio) u64 {
++    return self.backend.getChildPid();
++}
+diff --git a/src/termio/backend.zig b/src/termio/backend.zig
+index c29009acb..15acebcd5 100644
+--- a/src/termio/backend.zig
++++ b/src/termio/backend.zig
+@@ -110,6 +110,13 @@ pub const Backend = union(Kind) {
+             .exec => |*exec| exec.getProcessInfo(info),
+         };
+     }
++
++    /// Returns the pid of the running child process, if available.
++    pub fn getChildPid(self: *Backend) u64 {
++        return switch (self.*) {
++            .exec => |*exec| exec.getChildPid(),
++        };
++    }
+ };
+ 
+ /// Termio thread data. See termio.ThreadData for docs.
+diff --git a/src/termio/stream_handler.zig b/src/termio/stream_handler.zig
+index 0f1ee50f7..43f531b80 100644
+--- a/src/termio/stream_handler.zig
++++ b/src/termio/stream_handler.zig
+@@ -379,13 +379,13 @@ pub const StreamHandler = struct {
+             .apc_put => self.apc.feed(self.alloc, value),
+             .apc_put_slice => self.apc.feedSlice(self.alloc, value.bytes),
+             .kitty_clipboard => try self.kittyClipboard(value),
++            .program_status => try self.programStatus(value),
+ 
+             // Unimplemented
+             .title_push,
+             .title_pop,
+             .kitty_dnd,
+             .osc_unknown,
+-            .program_status,
+             => {},
+         }
+     }
+@@ -942,6 +942,9 @@ pub const StreamHandler = struct {
+ 
+         // Clear the progress bar
+         self.progressReport(.{ .state = .remove });
++
++        // Clear program status
++        self.programStatusClearAll() catch {};
+     }
+ 
+     /// Record a Kitty clipboard protocol session grant so future
+@@ -1947,6 +1950,95 @@ pub const StreamHandler = struct {
+     fn progressReport(self: *StreamHandler, report: terminal.osc.Command.ProgressReport) void {
+         self.surfaceMessageWriter(.{ .progress_report = report });
+     }
++
++    fn programStatus(
++        self: *StreamHandler,
++        value: terminal.osc.Command.ProgramStatus,
++    ) !void {
++        switch (value) {
++            .query => |terminator| {
++                var msg: termio.Message = .{ .write_small = .{} };
++                const reply = "\x1b]7501;" ++ terminal.osc.program_status.query_reply;
++                const resp = try std.fmt.bufPrint(&msg.write_small.data, "{s}{s}", .{ reply, terminator.string() });
++                msg.write_small.len = @intCast(resp.len);
++                self.messageWriter(msg);
++            },
++
++            .report => |report| {
++                var arena: std.heap.ArenaAllocator = .init(self.alloc);
++                errdefer arena.deinit();
++                const alloc = arena.allocator();
++
++                const req = try alloc.create(apprt.action.ProgramStatus.Heap);
++
++                const state: apprt.action.ProgramStatus.State = switch (report.state) {
++                    .idle => .idle,
++                    .working => .working,
++                    .done => .done,
++                    .blocked => .blocked,
++                    .@"error" => .@"error",
++                    .clear => .clear,
++                };
++
++                const kind: apprt.action.ProgramStatus.Kind = if (report.readOption(.kind)) |k| switch (k) {
++                    .permission => .permission,
++                    .question => .question,
++                    .auth => .auth,
++                } else .none;
++
++                const progress: i16 = if (report.readOption(.progress)) |p| @intCast(p) else -1;
++
++                const id_z = try alloc.dupeSentinel(u8, report.readOption(.id) orelse "", 0);
++                const app_z = try alloc.dupeSentinel(u8, report.readOption(.app) orelse "", 0);
++
++                var title_buf: [terminal.osc.program_status.max_title_bytes]u8 = undefined;
++                var title_w: std.Io.Writer = .fixed(&title_buf);
++                try report.writeText(.title, &title_w);
++                const title_z = try alloc.dupeSentinel(u8, title_w.buffered(), 0);
++
++                var msg_buf: [terminal.osc.program_status.max_msg_bytes]u8 = undefined;
++                var msg_w: std.Io.Writer = .fixed(&msg_buf);
++                try report.writeText(.msg, &msg_w);
++                const msg_z = try alloc.dupeSentinel(u8, msg_w.buffered(), 0);
++
++                req.* = .{
++                    .arena = arena,
++                    .report_c = .{
++                        .state = state,
++                        .kind = kind,
++                        .progress = progress,
++                        .id = id_z,
++                        .app = app_z,
++                        .title = title_z,
++                        .msg = msg_z,
++                    },
++                };
++                self.surfaceMessageWriter(.{ .program_status = req });
++            },
 +        }
 +    }
 +
-     pub fn initTerminal(self: *Backend, t: *terminal.Terminal) void {
-         switch (self.*) {
-             .exec => |*exec| exec.initTerminal(t),
++    fn programStatusClearAll(self: *StreamHandler) !void {
++        var arena: std.heap.ArenaAllocator = .init(self.alloc);
++        errdefer arena.deinit();
++        const alloc = arena.allocator();
++
++        const req = try alloc.create(apprt.action.ProgramStatus.Heap);
++        const empty_z = try alloc.dupeSentinel(u8, "", 0);
++        req.* = .{
++            .arena = arena,
++            .report_c = .{
++                .state = .clear,
++                .kind = .none,
++                .progress = -1,
++                .id = empty_z,
++                .app = empty_z,
++                .title = empty_z,
++                .msg = empty_z,
++            },
++        };
++        self.surfaceMessageWriter(.{ .program_status = req });
++    }
+ };
+ 
+ test "kitty clipboard read: targets-only never consumes a one-time grant" {

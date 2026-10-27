@@ -31,8 +31,10 @@ if [[ -f "$PATCH_FILE" ]]; then
 fi
 
 ZIG_BIN="${ZIG_BIN:-}"
-if [[ -z "$ZIG_BIN" && -x /opt/homebrew/opt/zig@0.15/bin/zig ]]; then
-  ZIG_BIN="/opt/homebrew/opt/zig@0.15/bin/zig"
+if [[ -z "$ZIG_BIN" && -x /opt/homebrew/opt/zig@0.17/bin/zig ]]; then
+  ZIG_BIN="/opt/homebrew/opt/zig@0.17/bin/zig"
+elif [[ -z "$ZIG_BIN" && -x /opt/homebrew/bin/zig ]]; then
+  ZIG_BIN="/opt/homebrew/bin/zig"
 fi
 if [[ -z "$ZIG_BIN" ]]; then
   ZIG_BIN="$(command -v zig || true)"

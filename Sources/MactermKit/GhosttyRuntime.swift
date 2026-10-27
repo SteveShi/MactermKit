@@ -34,73 +34,219 @@ private func getPasteboardString() -> String? {
     return nil
 }
 
-private func ghostty_read_clipboard_callback(
-    userdata: UnsafeMutableRawPointer?,
-    clipboard: ghostty_clipboard_e,
-    request: UnsafeMutableRawPointer?
-) -> Bool {
-    guard let userdata, let request else { return false }
-    // Identify the surface view by its address rather than dereferencing the raw
-    // pointer on the background thread. The view may be deallocated before this
-    // async block runs, so we look it up through the runtime's weak registry on
-    // the main thread to avoid a use-after-free.
-    let viewAddress = Int(bitPattern: userdata)
-    let requestAddress = Int(bitPattern: request)
-    
-    DispatchQueue.main.async {
-        guard let reqPtr = UnsafeMutableRawPointer(bitPattern: requestAddress) else { return }
-        
-        // If the view (and therefore its surface) is gone, the request pointer is
-        // no longer valid either, so we must not touch it.
-        guard let surfaceView = GhosttyRuntime.shared.surfaceView(forKey: viewAddress),
-              let surface = surfaceView.rawSurface else { return }
-        
-        let text = getPasteboardString() ?? ""
-        text.withCString { cStr in
-            ghostty_surface_complete_clipboard_request(surface, cStr, reqPtr, !text.isEmpty)
+private func completeClipboardRequest(
+    surface: ghostty_surface_t,
+    statePtr: UnsafeMutableRawPointer,
+    contents: [(mime: String, data: Data)],
+    available: [String],
+    confirmed: Bool,
+    remember: Bool
+) {
+    let availableCStrings = available.map { strdup($0) }
+    defer {
+        for ptr in availableCStrings {
+            if let ptr { free(ptr) }
         }
     }
-    return true
+    let availPtrs: [UnsafePointer<CChar>?] = availableCStrings.map { $0.map { UnsafePointer($0) } }
+
+    let nsDatas = contents.map { $0.data as NSData }
+    let mimeCStrings = contents.map { strdup($0.mime) }
+    defer {
+        for ptr in mimeCStrings {
+            if let ptr { free(ptr) }
+        }
+    }
+
+    var cContents: [ghostty_clipboard_content_s] = []
+    for (i, item) in contents.enumerated() {
+        let mimePtr = mimeCStrings[i]
+        let nsData = nsDatas[i]
+        let bytesPtr = nsData.bytes.assumingMemoryBound(to: CChar.self)
+        cContents.append(ghostty_clipboard_content_s(
+            mime: mimePtr,
+            data: bytesPtr,
+            len: item.data.count
+        ))
+    }
+
+    cContents.withUnsafeBufferPointer { cContentsBuf in
+        availPtrs.withUnsafeBufferPointer { availBuf in
+            var complete = ghostty_clipboard_complete_s(
+                contents: cContentsBuf.isEmpty ? nil : cContentsBuf.baseAddress,
+                contents_len: cContentsBuf.count,
+                available: availBuf.isEmpty ? nil : availBuf.baseAddress,
+                available_len: availBuf.count,
+                confirmed: confirmed,
+                remember: remember
+            )
+            ghostty_surface_complete_clipboard_request(surface, &complete, statePtr)
+        }
+    }
+}
+
+private func ghostty_read_clipboard_callback(
+    userdata: UnsafeMutableRawPointer?,
+    location: ghostty_clipboard_e,
+    state: UnsafeMutableRawPointer?,
+    mimes: UnsafePointer<UnsafePointer<CChar>?>?,
+    mimesLen: Int,
+    list: Bool
+) -> ghostty_clipboard_read_result_e {
+    guard let userdata, let state else { return GHOSTTY_CLIPBOARD_READ_UNAVAILABLE }
+    let viewAddress = Int(bitPattern: userdata)
+    let stateAddress = Int(bitPattern: state)
+
+    var requestedMimes: [String] = []
+    if let mimes, mimesLen > 0 {
+        for i in 0..<mimesLen {
+            if let cStr = mimes[i] {
+                requestedMimes.append(String(cString: cStr))
+            }
+        }
+    }
+    if requestedMimes.isEmpty && !list {
+        requestedMimes = ["text/plain"]
+    }
+
+    DispatchQueue.main.async {
+        guard let statePtr = UnsafeMutableRawPointer(bitPattern: stateAddress) else { return }
+        guard let surfaceView = GhosttyRuntime.shared.surfaceView(forKey: viewAddress) ??
+                                GhosttyRuntime.shared.surfaceView(forHandleKey: viewAddress),
+              let surface = surfaceView.rawSurface ?? GhosttyRuntime.shared.activeSurface else {
+            return
+        }
+
+        let pasteboard = NSPasteboard.general
+        var servedContents: [(mime: String, data: Data)] = []
+        for mime in requestedMimes {
+            if mime == "text/plain" || mime.hasPrefix("text/") {
+                if let text = getPasteboardString(), let data = text.data(using: .utf8) {
+                    servedContents.append((mime: "text/plain", data: data))
+                }
+            } else if mime == "text/html" {
+                if let data = pasteboard.data(forType: .html) {
+                    servedContents.append((mime: "text/html", data: data))
+                }
+            } else if mime == "image/png" {
+                if let data = pasteboard.data(forType: .png) {
+                    servedContents.append((mime: "image/png", data: data))
+                }
+            }
+        }
+
+        var availableMimes: [String] = []
+        if list {
+            if pasteboard.string(forType: .string) != nil || pasteboard.canReadObject(forClasses: [NSURL.self], options: nil) {
+                availableMimes.append("text/plain")
+            }
+            if pasteboard.data(forType: .html) != nil {
+                availableMimes.append("text/html")
+            }
+            if pasteboard.data(forType: .png) != nil {
+                availableMimes.append("image/png")
+            }
+            if pasteboard.data(forType: .tiff) != nil {
+                availableMimes.append("image/tiff")
+            }
+        }
+
+        completeClipboardRequest(
+            surface: surface,
+            statePtr: statePtr,
+            contents: servedContents,
+            available: availableMimes,
+            confirmed: false, // Must be false to trigger Ghostty's safety checks!
+            remember: false
+        )
+    }
+    return GHOSTTY_CLIPBOARD_READ_STARTED
 }
 
 private func ghostty_confirm_read_clipboard_callback(
     userdata: UnsafeMutableRawPointer?,
-    requestInfo: UnsafePointer<CChar>?,
-    requestData: UnsafeMutableRawPointer?,
+    confirmPtr: UnsafePointer<ghostty_clipboard_confirm_s>?,
+    state: UnsafeMutableRawPointer?,
     requestKind: ghostty_clipboard_request_e
 ) {
-    guard let userdata, let requestData else { return }
-    let runtimeAddress = Int(bitPattern: userdata)
-    let requestAddress = Int(bitPattern: requestData)
-    
-    DispatchQueue.main.async {
-        guard let runtimePtr = UnsafeMutableRawPointer(bitPattern: runtimeAddress) else { return }
-        guard let reqPtr = UnsafeMutableRawPointer(bitPattern: requestAddress) else { return }
-        
-        let runtime = Unmanaged<GhosttyRuntime>.fromOpaque(runtimePtr).takeUnretainedValue()
-        guard let surface = runtime.activeSurface else {
-            "".withCString { cStr in
-                ghostty_surface_complete_clipboard_request(nil, cStr, reqPtr, false)
+    guard let userdata, let state else { return }
+    let viewAddress = Int(bitPattern: userdata)
+    let stateAddress = Int(bitPattern: state)
+
+    var copiedContents: [(mime: String, data: Data)] = []
+    var copiedAvailable: [String] = []
+    var programName: String? = nil
+    var canRemember: Bool = false
+
+    if let confirm = confirmPtr?.pointee {
+        if let contents = confirm.contents, confirm.contents_len > 0 {
+            for i in 0..<confirm.contents_len {
+                let item = contents[i]
+                let mime = item.mime.map { String(cString: $0) } ?? "text/plain"
+                let data: Data
+                if let dataPtr = item.data, item.len > 0 {
+                    data = Data(bytes: dataPtr, count: item.len)
+                } else {
+                    data = Data()
+                }
+                copiedContents.append((mime: mime, data: data))
             }
+        }
+        if let avail = confirm.available, confirm.available_len > 0 {
+            for i in 0..<confirm.available_len {
+                if let cStr = avail[i] {
+                    copiedAvailable.append(String(cString: cStr))
+                }
+            }
+        }
+        if let namePtr = confirm.name {
+            programName = String(cString: namePtr)
+        }
+        canRemember = confirm.can_remember
+    }
+
+    DispatchQueue.main.async {
+        guard let statePtr = UnsafeMutableRawPointer(bitPattern: stateAddress) else { return }
+        guard let surfaceView = GhosttyRuntime.shared.surfaceView(forKey: viewAddress) ??
+                                GhosttyRuntime.shared.surfaceView(forHandleKey: viewAddress),
+              let surface = surfaceView.rawSurface ?? GhosttyRuntime.shared.activeSurface else {
             return
         }
-        
+
         let alert = NSAlert()
-        alert.messageText = NSLocalizedString("Clipboard Read Request", comment: "")
-        alert.informativeText = NSLocalizedString("A command-line program is requesting to read your clipboard. Do you want to allow this?", comment: "")
-        alert.addButton(withTitle: NSLocalizedString("Allow", comment: ""))
-        alert.addButton(withTitle: NSLocalizedString("Deny", comment: ""))
-        
+        switch requestKind {
+        case GHOSTTY_CLIPBOARD_REQUEST_PASTE:
+            alert.messageText = NSLocalizedString("Unsafe Paste Warning", comment: "")
+            alert.informativeText = NSLocalizedString("The text you are pasting contains newlines or carriage returns that may execute commands immediately. Do you want to paste anyway?", comment: "")
+            alert.addButton(withTitle: NSLocalizedString("Paste", comment: ""))
+            alert.addButton(withTitle: NSLocalizedString("Cancel", comment: ""))
+
+        default:
+            let prog = programName ?? NSLocalizedString("A command-line program", comment: "")
+            alert.messageText = NSLocalizedString("Clipboard Access Request", comment: "")
+            alert.informativeText = String(format: NSLocalizedString("%@ is requesting to read your clipboard. Do you want to allow this?", comment: ""), prog)
+            alert.addButton(withTitle: NSLocalizedString("Allow", comment: ""))
+            alert.addButton(withTitle: NSLocalizedString("Deny", comment: ""))
+        }
+
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
-            let text = getPasteboardString() ?? ""
-            text.withCString { cStr in
-                ghostty_surface_complete_clipboard_request(surface, cStr, reqPtr, !text.isEmpty)
+            var finalContents = copiedContents
+            if finalContents.isEmpty {
+                if let text = getPasteboardString(), let data = text.data(using: .utf8) {
+                    finalContents = [(mime: "text/plain", data: data)]
+                }
             }
+            completeClipboardRequest(
+                surface: surface,
+                statePtr: statePtr,
+                contents: finalContents,
+                available: copiedAvailable,
+                confirmed: true,
+                remember: canRemember
+            )
         } else {
-            "".withCString { cStr in
-                ghostty_surface_complete_clipboard_request(surface, cStr, reqPtr, false)
-            }
+            ghostty_surface_deny_clipboard_request(surface, statePtr)
         }
     }
 }
@@ -114,22 +260,31 @@ private func ghostty_write_clipboard_callback(
 ) {
     guard let content, contentLen > 0 else { return }
     
-    // String is Sendable, so we copy it out on the calling background thread
-    // before sending it to the MainActor
+    // String and Data are Sendable, so we copy them out on the calling background thread
+    // before sending to the MainActor
     var textToCopy: String? = nil
+    var htmlDataToCopy: Data? = nil
+    var pngDataToCopy: Data? = nil
+
     for i in 0..<contentLen {
         let item = content[i]
-        guard let mimePtr = item.mime, let dataPtr = item.data else { continue }
-        let mime = String(cString: mimePtr)
-        let data = String(cString: dataPtr)
-        
+        guard let dataPtr = item.data, item.len > 0 else { continue }
+        let mime = item.mime.map { String(cString: $0) } ?? "text/plain"
+        let data = Data(bytes: dataPtr, count: item.len)
         if mime == "text/plain" || mime.hasPrefix("text/") {
-            textToCopy = data
-            break
+            if let str = String(data: data, encoding: .utf8) {
+                textToCopy = (textToCopy ?? "") + str
+            }
+        } else if mime == "text/html" {
+            htmlDataToCopy = data
+        } else if mime == "image/png" {
+            pngDataToCopy = data
         }
     }
     
-    guard let text = textToCopy else { return }
+    if textToCopy == nil && htmlDataToCopy == nil && pngDataToCopy == nil {
+        return
+    }
     
     DispatchQueue.main.async {
         // When the core requires confirmation (e.g. `clipboard-write = ask`),
@@ -137,18 +292,93 @@ private func ghostty_write_clipboard_callback(
         // we deny the write — never silently overwrite the user's clipboard on
         // behalf of a program (OSC 52 clipboard-hijack protection).
         if confirm {
-            let approved = GhosttyRuntime.shared.clipboardWriteConfirmationHandler?(text) ?? false
+            let approved = GhosttyRuntime.shared.clipboardWriteConfirmationHandler?(textToCopy ?? "") ?? false
             guard approved else { return }
         }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        if let text = textToCopy {
+            pasteboard.setString(text, forType: .string)
+        }
+        if let htmlData = htmlDataToCopy {
+            pasteboard.setData(htmlData, forType: .html)
+        }
+        if let pngData = pngDataToCopy {
+            pasteboard.setData(pngData, forType: .png)
+        }
+    }
+}
+
+/// Program status report state (OSC 7501).
+public enum GhosttyProgramStatusState: Int, Sendable, Equatable {
+    case idle = 0
+    case working = 1
+    case done = 2
+    case blocked = 3
+    case error = 4
+    case clear = 5
+}
+
+/// Program status report kind (OSC 7501).
+public enum GhosttyProgramStatusKind: Int, Sendable, Equatable {
+    case none = -1
+    case permission = 0
+    case question = 1
+    case auth = 2
+}
+
+/// Detailed Program Status Report (OSC 7501).
+public struct GhosttyProgramStatusReport: Sendable, Equatable {
+    public let state: GhosttyProgramStatusState
+    public let kind: GhosttyProgramStatusKind
+    public let progress: Int16
+    public let id: String
+    public let app: String
+    public let title: String
+    public let message: String
+
+    public init(
+        state: GhosttyProgramStatusState,
+        kind: GhosttyProgramStatusKind,
+        progress: Int16,
+        id: String,
+        app: String,
+        title: String,
+        message: String
+    ) {
+        self.state = state
+        self.kind = kind
+        self.progress = progress
+        self.id = id
+        self.app = app
+        self.title = title
+        self.message = message
+    }
+}
+
+/// Progress report state (ConEmu OSC 9;4).
+public enum GhosttyProgressReportState: Int, Sendable, Equatable {
+    case remove = 0
+    case set = 1
+    case error = 2
+    case indeterminate = 3
+    case pause = 4
+}
+
+/// ConEmu OSC 9;4 progress report.
+public struct GhosttyProgressReport: Sendable, Equatable {
+    public let state: GhosttyProgressReportState
+    public let progress: Int8
+
+    public init(state: GhosttyProgressReportState, progress: Int8) {
+        self.state = state
+        self.progress = progress
     }
 }
 
 /// Terminal events surfaced from Ghostty's action callback that a host app may
 /// want to react to (e.g. system notifications, CWD updates, title changes).
-public enum GhosttyTerminalEvent: Sendable {
+public enum GhosttyTerminalEvent: Sendable, Equatable {
     /// A program rang the terminal bell (BEL).
     case bell
     /// A program requested a desktop notification (OSC 9 / OSC 777).
@@ -163,6 +393,12 @@ public enum GhosttyTerminalEvent: Sendable {
     case tabTitleChanged(title: String)
     /// A command finished executing (OSC 133 D).
     case commandFinished(exitCode: Int16, durationNs: UInt64)
+    /// Program status report updated (OSC 7501).
+    case programStatus(GhosttyProgramStatusReport)
+    /// Progress report updated (ConEmu OSC 9;4).
+    case progressReport(GhosttyProgressReport)
+    /// Pointer hovered over or exited a link.
+    case hoverLink(String?)
 }
 
 /// Top-level C action callback (no actor isolation — may be invoked from
@@ -174,46 +410,136 @@ private func ghostty_action_callback(
     _ target: ghostty_target_s,
     _ action: ghostty_action_s
 ) -> Bool {
-    let event: GhosttyTerminalEvent
-    switch action.tag {
-    case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
-        let notification = action.action.desktop_notification
-        event = .desktopNotification(
-            title: notification.title.map { String(cString: $0) } ?? "",
-            body: notification.body.map { String(cString: $0) } ?? ""
-        )
-    case GHOSTTY_ACTION_RING_BELL:
-        event = .bell
-    case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
-        event = .childExited(exitCode: action.action.child_exited.exit_code)
-    case GHOSTTY_ACTION_PWD:
-        let pwd = action.action.pwd.pwd.map { String(cString: $0) } ?? ""
-        event = .currentDirectoryChanged(url: pwd)
-    case GHOSTTY_ACTION_SET_TITLE:
-        let title = action.action.set_title.title.map { String(cString: $0) } ?? ""
-        event = .titleChanged(title: title)
-    case GHOSTTY_ACTION_SET_TAB_TITLE:
-        let title = action.action.set_tab_title.title.map { String(cString: $0) } ?? ""
-        event = .tabTitleChanged(title: title)
-    case GHOSTTY_ACTION_COMMAND_FINISHED:
-        let finished = action.action.command_finished
-        event = .commandFinished(exitCode: finished.exit_code, durationNs: finished.duration)
-    default:
-        return false
-    }
-
     var targetSurfaceKey: Int? = nil
     if target.tag == GHOSTTY_TARGET_SURFACE, let surface = target.target.surface {
         targetSurfaceKey = Int(bitPattern: surface)
     }
 
+    switch action.tag {
+    case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
+        let notification = action.action.desktop_notification
+        let event = GhosttyTerminalEvent.desktopNotification(
+            title: notification.title.map { String(cString: $0) } ?? "",
+            body: notification.body.map { String(cString: $0) } ?? ""
+        )
+        dispatchTerminalEvent(event, targetSurfaceKey: targetSurfaceKey)
+        return true
+
+    case GHOSTTY_ACTION_RING_BELL:
+        dispatchTerminalEvent(.bell, targetSurfaceKey: targetSurfaceKey)
+        return true
+
+    case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
+        let event = GhosttyTerminalEvent.childExited(exitCode: action.action.child_exited.exit_code)
+        dispatchTerminalEvent(event, targetSurfaceKey: targetSurfaceKey)
+        return true
+
+    case GHOSTTY_ACTION_PWD:
+        let pwd = action.action.pwd.pwd.map { String(cString: $0) } ?? ""
+        dispatchTerminalEvent(.currentDirectoryChanged(url: pwd), targetSurfaceKey: targetSurfaceKey)
+        return true
+
+    case GHOSTTY_ACTION_SET_TITLE:
+        let title = action.action.set_title.title.map { String(cString: $0) } ?? ""
+        dispatchTerminalEvent(.titleChanged(title: title), targetSurfaceKey: targetSurfaceKey)
+        return true
+
+    case GHOSTTY_ACTION_SET_TAB_TITLE:
+        let title = action.action.set_tab_title.title.map { String(cString: $0) } ?? ""
+        dispatchTerminalEvent(.tabTitleChanged(title: title), targetSurfaceKey: targetSurfaceKey)
+        return true
+
+    case GHOSTTY_ACTION_COMMAND_FINISHED:
+        let finished = action.action.command_finished
+        let event = GhosttyTerminalEvent.commandFinished(exitCode: finished.exit_code, durationNs: finished.duration)
+        dispatchTerminalEvent(event, targetSurfaceKey: targetSurfaceKey)
+        return true
+
+    case GHOSTTY_ACTION_PROGRAM_STATUS:
+        guard let reportPtr = action.action.program_status.report else { return false }
+        let r = reportPtr.pointee
+        let report = GhosttyProgramStatusReport(
+            state: GhosttyProgramStatusState(rawValue: Int(r.state.rawValue)) ?? .idle,
+            kind: GhosttyProgramStatusKind(rawValue: Int(r.kind.rawValue)) ?? .none,
+            progress: r.progress,
+            id: r.id.map { String(cString: $0) } ?? "",
+            app: r.app.map { String(cString: $0) } ?? "",
+            title: r.title.map { String(cString: $0) } ?? "",
+            message: r.msg.map { String(cString: $0) } ?? ""
+        )
+        dispatchTerminalEvent(.programStatus(report), targetSurfaceKey: targetSurfaceKey)
+        return true
+
+    case GHOSTTY_ACTION_PROGRESS_REPORT:
+        let p = action.action.progress_report
+        let report = GhosttyProgressReport(
+            state: GhosttyProgressReportState(rawValue: Int(p.state.rawValue)) ?? .remove,
+            progress: p.progress
+        )
+        dispatchTerminalEvent(.progressReport(report), targetSurfaceKey: targetSurfaceKey)
+        return true
+
+    case GHOSTTY_ACTION_MOUSE_SHAPE:
+        let shape = action.action.mouse_shape
+        DispatchQueue.main.async {
+            if let targetSurfaceKey, let view = GhosttyRuntime.shared.surfaceView(forHandleKey: targetSurfaceKey) {
+                view.applyMouseShape(shape)
+            }
+        }
+        return true
+
+    case GHOSTTY_ACTION_MOUSE_OVER_LINK:
+        let linkAction = action.action.mouse_over_link
+        let urlStr: String?
+        if let urlPtr = linkAction.url, linkAction.len > 0 {
+            urlStr = String(bytes: UnsafeRawBufferPointer(start: urlPtr, count: linkAction.len), encoding: .utf8)
+        } else {
+            urlStr = nil
+        }
+        dispatchTerminalEvent(.hoverLink(urlStr), targetSurfaceKey: targetSurfaceKey)
+        return true
+
+    case GHOSTTY_ACTION_OPEN_URL:
+        let openUrl = action.action.open_url
+        guard let urlPtr = openUrl.url, openUrl.len > 0,
+              let urlStr = String(bytes: UnsafeRawBufferPointer(start: urlPtr, count: Int(openUrl.len)), encoding: .utf8),
+              let url = URL(string: urlStr),
+              let scheme = url.scheme?.lowercased() else {
+            return false
+        }
+
+        let isAllowedScheme: Bool
+        switch scheme {
+        case "http", "https", "mailto":
+            isAllowedScheme = true
+        case "file":
+            isAllowedScheme = (openUrl.kind == GHOSTTY_ACTION_OPEN_URL_KIND_TEXT ||
+                               openUrl.kind == GHOSTTY_ACTION_OPEN_URL_KIND_HTML)
+        default:
+            isAllowedScheme = false
+        }
+
+        guard isAllowedScheme else {
+            return false
+        }
+
+        DispatchQueue.main.async {
+            NSWorkspace.shared.open(url)
+        }
+        return true
+
+    default:
+        return false
+    }
+}
+
+private func dispatchTerminalEvent(_ event: GhosttyTerminalEvent, targetSurfaceKey: Int?) {
     DispatchQueue.main.async {
         if let targetSurfaceKey, let view = GhosttyRuntime.shared.surfaceView(forHandleKey: targetSurfaceKey) {
             view.onEvent?(event)
         }
         GhosttyRuntime.shared.onTerminalEvent?(event)
     }
-    return true
 }
 
 /// Weak wrapper so the runtime registry never extends a surface view's lifetime.
@@ -280,6 +606,12 @@ public final class GhosttyRuntime: DisplayLinkDelegate {
         }
         
         displayLink.delegatingObject(self)
+    }
+
+    /// Sets the color scheme (light or dark) across all surfaces of the Ghostty app.
+    public func setColorScheme(isDark: Bool) {
+        guard let app = app else { return }
+        ghostty_app_set_color_scheme(app, isDark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT)
     }
 
     public func setPendingTick() {

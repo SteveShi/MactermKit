@@ -10,11 +10,15 @@ It decouples the native terminal simulation implementation, providing smooth ren
 
 ## Core Features
 
-1. **Cross-platform Compatibility (Stubs)**: Provides SwiftUI cross-platform wrapper `TerminalViewRepresentable`, and exposes `UITerminalView` stubs on the iOS platform for future evolution.
-2. **Hardware High-Refresh-Rate Sync**: Integrates `MSDisplayLink`. When Ghostty triggers a Wakeup draw request, it defers rendering to coordinate with the vertical sync signal of the screen (VSYNC, e.g., 120Hz), eliminating useless CPU spin cycles and significantly reducing CPU overhead.
-3. **Color Theme Integration (GhosttyTheme)**: Pre-packaged with beautiful themes like Dracula, GitHub Dark, GitHub Light, Gruvbox Dark, and Doom One. Supports real-time theme hot-swapping.
-4. **Swift 6 Concurrency Safety**: The entire module strictly follows the Swift 6 Concurrency safety specifications, using `@MainActor` to isolate UI state and eliminate data races.
-5. **Sandboxed Shell Simulation (ShellCraftKit)**: Retains stubs and APIs for executing sandboxed shell commands in-process for future command mock expansion.
+1. **Ghostty v1.4.0 Core Engine**: Built upon upstream Ghostty 1.4.0 with Zig 0.17 toolchain, supporting modern terminal escape sequences, Metal-accelerated rendering, and low latency.
+2. **Program Status Protocol (OSC 7501)**: Full end-to-end integration of the OSC 7501 protocol reporting real-time CLI tool execution status, state changes (working, idle, done, blocked, error), kinds (permission, question, auth), and percentage progress.
+3. **ConEmu Progress Protocol (OSC 9;4)**: Native parsing of task progress states (set, remove, error, indeterminate, pause) and percentage indicators.
+4. **Process & TTY Introspection**: Exposes the root shell process ID (`processID` / `ptyPID`), the active foreground subshell PID (`foregroundProcessID`), and the assigned TTY device node (`ttyName`).
+5. **Bracketed Paste & Safety Protection**: Provides `pasteText(_:)` utilizing Ghostty's core paste pipeline (bracketed paste, Kitty paste modes, and safety checks against unexpected returns).
+6. **Dynamic Cursor Shapes & Link Hover**: Maps Ghostty's semantic mouse shapes to AppKit `NSCursor`, with real-time hover notifications for hyperlinks (`hoverLink`).
+7. **Hardware High-Refresh-Rate Sync**: Integrates `MSDisplayLink`. When Ghostty triggers a Wakeup draw request, it defers rendering to coordinate with the vertical sync signal of the screen (VSYNC, e.g., 120Hz), eliminating useless CPU spin cycles and significantly reducing CPU overhead.
+8. **Color Theme Integration & Dark Mode**: Pre-packaged with beautiful themes (Dracula, GitHub Dark/Light, Gruvbox, Doom One). Supports runtime theme switching and explicit system appearance adjustments (`setColorScheme(isDark:)`).
+9. **Swift 6 Concurrency Safety**: The entire module strictly follows the Swift 6 Concurrency safety specifications, using `@MainActor` to isolate UI state and eliminate data races.
 
 ---
 
@@ -50,6 +54,9 @@ public final class GhosttyRuntime: DisplayLinkDelegate {
     
     /// Underlying Global C Config
     public private(set) var config: ghostty_config_t?
+
+    /// Sets the color scheme (light or dark) across all surfaces of the Ghostty app
+    public func setColorScheme(isDark: Bool)
     
     /// Flags pending frames to be consumed by DisplayLink ticks
     public func setPendingTick()
@@ -70,12 +77,36 @@ public class GhosttySurfaceView: NSView, NSTextInputClient {
     
     /// Underlying C Surface Handle
     public var rawSurface: ghostty_surface_t? { get }
+
+    /// Root PID of the shell process running in this surface's PTY
+    public var processID: pid_t? { get }
+
+    /// Backward-compatible alias for `processID`
+    public var ptyPID: pid_t? { get }
+
+    /// Foreground process PID currently executing in the terminal
+    public var foregroundProcessID: pid_t? { get }
+
+    /// Assigned TTY device path (e.g. "/dev/ttys001")
+    public var ttyName: String? { get }
+
+    /// Whether this surface is marked as occluded
+    public private(set) var isOccluded: Bool
+
+    /// Informs Ghostty whether the surface is occluded
+    public func setOccluded(_ occluded: Bool)
+
+    /// Sets the color scheme (light or dark) for this surface
+    public func setColorScheme(isDark: Bool)
     
     /// View constructor
     public init(runtime: GhosttyRuntime = .shared, config: GhosttySurfaceConfiguration = GhosttySurfaceConfiguration())
     
     /// Applies a theme at runtime (dynamic hot-swap)
     public func applyTheme(_ theme: GhosttyThemeDefinition)
+
+    /// Pastes text using Ghostty's bracketed paste and safety protections
+    public func pasteText(_ text: String)
     
     /// Reads the entire scrollback buffer and active screen content as plain text
     public func readFullText(maxLines: Int = 10000) -> String?

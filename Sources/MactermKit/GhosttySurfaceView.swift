@@ -17,14 +17,84 @@ public class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         surface
     }
 
-    /// The pid of the child process running in this surface's PTY, if available.
+    /// The root pid of the process running in this surface's PTY.
     /// Best-effort: returns nil before the child spawns or after it is cleaned up.
     /// Requires the patched MactermKitCore build (ghostty_surface_pid).
     @available(macOS 15.0, *)
-    public var ptyPID: pid_t? {
+    public var processID: pid_t? {
         guard let surface = rawSurface else { return nil }
         let pid = ghostty_surface_pid(surface)
-        return pid > 0 ? pid : nil
+        return pid > 0 ? pid_t(pid) : nil
+    }
+
+    /// The pid of the child process running in this surface's PTY, if available.
+    /// Backward-compatible alias for `processID`.
+    @available(macOS 15.0, *)
+    public var ptyPID: pid_t? {
+        processID
+    }
+
+    /// The PID of the current foreground process running in the terminal, if available.
+    public var foregroundProcessID: pid_t? {
+        guard let surface = rawSurface else { return nil }
+        let pid = ghostty_surface_foreground_pid(surface)
+        return pid > 0 ? pid_t(pid) : nil
+    }
+
+    /// The name of the TTY associated with this surface (e.g. "/dev/ttys001").
+    public var ttyName: String? {
+        guard let surface = rawSurface else { return nil }
+        let str = ghostty_surface_tty_name(surface)
+        defer { ghostty_string_free(str) }
+        guard let ptr = str.ptr, str.len > 0 else { return nil }
+        return String(decoding: UnsafeRawBufferPointer(start: ptr, count: Int(str.len)), as: UTF8.self)
+    }
+
+    /// Whether this surface is currently marked as occluded.
+    public private(set) var isOccluded: Bool = false
+
+    /// Informs Ghostty whether the surface is occluded (hidden by other windows or off-screen).
+    public func setOccluded(_ occluded: Bool) {
+        isOccluded = occluded
+        guard let surface = surface else { return }
+        ghostty_surface_set_occlusion(surface, !occluded)
+    }
+
+    /// Sets the color scheme (light or dark) for this surface.
+    public func setColorScheme(isDark: Bool) {
+        guard let surface = surface else { return }
+        ghostty_surface_set_color_scheme(surface, isDark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT)
+    }
+
+    func applyMouseShape(_ shape: ghostty_action_mouse_shape_e) {
+        let cursor: NSCursor
+        switch shape {
+        case GHOSTTY_MOUSE_SHAPE_DEFAULT:
+            cursor = .arrow
+        case GHOSTTY_MOUSE_SHAPE_POINTER:
+            cursor = .pointingHand
+        case GHOSTTY_MOUSE_SHAPE_TEXT:
+            cursor = .iBeam
+        case GHOSTTY_MOUSE_SHAPE_VERTICAL_TEXT:
+            cursor = .iBeamCursorForVerticalLayout
+        case GHOSTTY_MOUSE_SHAPE_CROSSHAIR:
+            cursor = .crosshair
+        case GHOSTTY_MOUSE_SHAPE_GRAB:
+            cursor = .openHand
+        case GHOSTTY_MOUSE_SHAPE_GRABBING:
+            cursor = .closedHand
+        case GHOSTTY_MOUSE_SHAPE_NOT_ALLOWED, GHOSTTY_MOUSE_SHAPE_NO_DROP:
+            cursor = .operationNotAllowed
+        case GHOSTTY_MOUSE_SHAPE_COL_RESIZE, GHOSTTY_MOUSE_SHAPE_EW_RESIZE, GHOSTTY_MOUSE_SHAPE_E_RESIZE, GHOSTTY_MOUSE_SHAPE_W_RESIZE:
+            cursor = .resizeLeftRight
+        case GHOSTTY_MOUSE_SHAPE_ROW_RESIZE, GHOSTTY_MOUSE_SHAPE_NS_RESIZE, GHOSTTY_MOUSE_SHAPE_N_RESIZE, GHOSTTY_MOUSE_SHAPE_S_RESIZE:
+            cursor = .resizeUpDown
+        case GHOSTTY_MOUSE_SHAPE_COPY:
+            cursor = .dragCopy
+        default:
+            cursor = .arrow
+        }
+        cursor.set()
     }
 
     /// Invoked on the main thread when a terminal event specific to this surface occurs.
@@ -371,6 +441,18 @@ public class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
             ghostty_surface_text(surface, cStr, UInt(text.utf8.count))
         }
     }
+
+    /// Pastes text into the terminal using Ghostty's paste machinery
+    /// (bracketed paste, Kitty paste mode, and paste safety protections).
+    public func pasteText(_ text: String) {
+        guard let surface = surface, !isReadOnly else { return }
+        text.utf8CString.withUnsafeBufferPointer { buffer in
+            guard let base = buffer.baseAddress else { return }
+            base.withMemoryRebound(to: CChar.self, capacity: buffer.count) { cStr in
+                ghostty_surface_paste_text(surface, cStr, UInt(text.utf8.count))
+            }
+        }
+    }
     
     @objc public func searchWithGoogleAction(_ sender: Any) {
         guard let selectedText = self.selectedText,
@@ -404,12 +486,13 @@ public class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
     }
 
     @objc public func pasteAction(_ sender: Any) {
+        guard !isReadOnly else { return }
         let pasteboard = NSPasteboard.general
         if let text = pasteboard.string(forType: .string) {
-            writeText(text)
+            pasteText(text)
         } else if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty {
             let pathString = urls.map { Self.shellEscapePath($0.path) }.joined(separator: " ")
-            writeText(pathString)
+            pasteText(pathString)
         }
     }
 
@@ -435,10 +518,10 @@ public class GhosttySurfaceView: NSView, @preconcurrency NSTextInputClient {
         let pboard = sender.draggingPasteboard
         if let urls = pboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], !urls.isEmpty {
             let pathString = urls.map { Self.shellEscapePath($0.path) }.joined(separator: " ")
-            writeText(pathString)
+            pasteText(pathString)
             return true
         } else if let str = pboard.string(forType: .string), !str.isEmpty {
-            writeText(str)
+            pasteText(str)
             return true
         }
         return false
