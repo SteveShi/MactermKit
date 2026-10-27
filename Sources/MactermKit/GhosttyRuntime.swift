@@ -149,7 +149,7 @@ private func ghostty_read_clipboard_callback(
 
         var availableMimes: [String] = []
         if list {
-            if pasteboard.string(forType: .string) != nil || pasteboard.availableType(from: [.fileURL, .URL]) != nil {
+            if pasteboard.string(forType: .string) != nil || pasteboard.string(forType: .fileURL) != nil || pasteboard.string(forType: .URL) != nil {
                 availableMimes.append("text/plain")
             }
             if pasteboard.data(forType: .html) != nil {

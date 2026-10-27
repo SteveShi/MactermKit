@@ -4,7 +4,7 @@ title: Statically link libghostty Zig engine
 category: decision
 status: active
 created: "2026-08-21T06:38:37"
-updated: "2026-10-28T03:40:27"
+updated: "2026-10-28T03:54:17"
 ---
 
 <!-- compiled_truth -->
@@ -33,4 +33,9 @@ Precompiled Zig libghostty into static archive `libghostty.a` and wrapped with s
 - time: 2026-10-28T03:40:27
   kind: note
   summary: Fix Swift 6 strict concurrency pasteboard check in v1.0.30 by replacing nonisolated canReadObject with availableType
+  affects: [zig-c-ffi-static-link]
+
+- time: 2026-10-28T03:54:17
+  kind: note
+  summary: "Use string(forType:) exclusively for pasteboard type checks in v1.0.31 to eliminate region-based isolation data-race diagnostics"
   affects: [zig-c-ffi-static-link]
