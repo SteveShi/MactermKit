@@ -35,6 +35,7 @@ private func ghostty_wakeup_callback(userdata: UnsafeMutableRawPointer?) {
     }
 }
 
+@MainActor
 private func getPasteboardString() -> String? {
     let pasteboard = NSPasteboard.general
     if let text = pasteboard.string(forType: .string) {
@@ -46,6 +47,7 @@ private func getPasteboardString() -> String? {
     return nil
 }
 
+@MainActor
 private func completeClipboardRequest(
     surface: ghostty_surface_t,
     statePtr: UnsafeMutableRawPointer,
@@ -122,54 +124,11 @@ private func ghostty_read_clipboard_callback(
     }
 
     DispatchQueue.main.async {
-        guard let statePtr = UnsafeMutableRawPointer(bitPattern: stateAddress) else { return }
-        guard let surfaceView = GhosttyRuntime.shared.surfaceView(forKey: viewAddress) ??
-                                GhosttyRuntime.shared.surfaceView(forHandleKey: viewAddress),
-              let surface = surfaceView.rawSurface ?? GhosttyRuntime.shared.activeSurface else {
-            return
-        }
-
-        let pasteboard = NSPasteboard.general
-        var servedContents: [(mime: String, data: Data)] = []
-        for mime in requestedMimes {
-            if mime == "text/plain" || mime.hasPrefix("text/") {
-                if let text = getPasteboardString(), let data = text.data(using: .utf8) {
-                    servedContents.append((mime: "text/plain", data: data))
-                }
-            } else if mime == "text/html" {
-                if let data = pasteboard.data(forType: .html) {
-                    servedContents.append((mime: "text/html", data: data))
-                }
-            } else if mime == "image/png" {
-                if let data = pasteboard.data(forType: .png) {
-                    servedContents.append((mime: "image/png", data: data))
-                }
-            }
-        }
-
-        var availableMimes: [String] = []
-        if list {
-            if pasteboard.string(forType: .string) != nil || pasteboard.string(forType: .fileURL) != nil || pasteboard.string(forType: .URL) != nil {
-                availableMimes.append("text/plain")
-            }
-            if pasteboard.data(forType: .html) != nil {
-                availableMimes.append("text/html")
-            }
-            if pasteboard.data(forType: .png) != nil {
-                availableMimes.append("image/png")
-            }
-            if pasteboard.data(forType: .tiff) != nil {
-                availableMimes.append("image/tiff")
-            }
-        }
-
-        completeClipboardRequest(
-            surface: surface,
-            statePtr: statePtr,
-            contents: servedContents,
-            available: availableMimes,
-            confirmed: false, // Must be false to trigger Ghostty's safety checks!
-            remember: false
+        GhosttyRuntime.shared.handleReadClipboard(
+            viewAddress: viewAddress,
+            stateAddress: stateAddress,
+            requestedMimes: requestedMimes,
+            list: list
         )
     }
     return GHOSTTY_CLIPBOARD_READ_STARTED
@@ -694,5 +653,62 @@ public final class GhosttyRuntime: DisplayLinkDelegate {
     public func appTick() {
         guard let app = app else { return }
         ghostty_app_tick(app)
+    }
+
+    func handleReadClipboard(
+        viewAddress: Int,
+        stateAddress: Int,
+        requestedMimes: [String],
+        list: Bool
+    ) {
+        guard let statePtr = UnsafeMutableRawPointer(bitPattern: stateAddress) else { return }
+        guard let surfaceView = surfaceView(forKey: viewAddress) ?? surfaceView(forHandleKey: viewAddress),
+              let surface = surfaceView.rawSurface ?? activeSurface else {
+            return
+        }
+
+        let pasteboard = NSPasteboard.general
+        var servedContents: [(mime: String, data: Data)] = []
+        for mime in requestedMimes {
+            if mime == "text/plain" || mime.hasPrefix("text/") {
+                if let text = getPasteboardString(), let data = text.data(using: .utf8) {
+                    servedContents.append((mime: "text/plain", data: data))
+                }
+            } else if mime == "text/html" {
+                if let data = pasteboard.data(forType: .html) {
+                    servedContents.append((mime: "text/html", data: data))
+                }
+            } else if mime == "image/png" {
+                if let data = pasteboard.data(forType: .png) {
+                    servedContents.append((mime: "image/png", data: data))
+                }
+            }
+        }
+
+        var availableMimes: [String] = []
+        if list, let types = pasteboard.types {
+            let typeSet = Set(types)
+            if typeSet.contains(.string) || typeSet.contains(.fileURL) || typeSet.contains(.URL) {
+                availableMimes.append("text/plain")
+            }
+            if typeSet.contains(.html) {
+                availableMimes.append("text/html")
+            }
+            if typeSet.contains(.png) {
+                availableMimes.append("image/png")
+            }
+            if typeSet.contains(.tiff) {
+                availableMimes.append("image/tiff")
+            }
+        }
+
+        completeClipboardRequest(
+            surface: surface,
+            statePtr: statePtr,
+            contents: servedContents,
+            available: availableMimes,
+            confirmed: false,
+            remember: false
+        )
     }
 }
