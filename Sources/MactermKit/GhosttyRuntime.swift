@@ -1,7 +1,19 @@
 import AppKit
 import Foundation
+import UniformTypeIdentifiers
 import MactermKitCore
 import MSDisplayLink
+
+private extension NSWorkspace {
+    func defaultApplicationURL(forExtension ext: String) -> URL? {
+        guard let uti = UTType(filenameExtension: ext) else { return nil }
+        return urlForApplication(toOpen: uti)
+    }
+
+    func defaultApplicationURL(for utType: UTType) -> URL? {
+        urlForApplication(toOpen: utType)
+    }
+}
 
 // Use a top-level function for the C callback to ensure NO implicit actor isolation.
 // This is critical because this function is called from Ghostty's background renderer thread.
@@ -260,6 +272,9 @@ private func ghostty_write_clipboard_callback(
 ) {
     guard let content, contentLen > 0 else { return }
     
+    // Bound each clipboard item to at most 16 MiB
+    let maxClipboardItemBytes = 16 * 1024 * 1024
+    
     // String and Data are Sendable, so we copy them out on the calling background thread
     // before sending to the MainActor
     var textToCopy: String? = nil
@@ -268,17 +283,21 @@ private func ghostty_write_clipboard_callback(
 
     for i in 0..<contentLen {
         let item = content[i]
-        guard let dataPtr = item.data, item.len > 0 else { continue }
+        guard let dataPtr = item.data, item.len > 0, item.len <= maxClipboardItemBytes else { continue }
         let mime = item.mime.map { String(cString: $0) } ?? "text/plain"
         let data = Data(bytes: dataPtr, count: item.len)
-        if mime == "text/plain" || mime.hasPrefix("text/") {
-            if let str = String(data: data, encoding: .utf8) {
-                textToCopy = (textToCopy ?? "") + str
+        if mime == "text/html" {
+            if htmlDataToCopy == nil {
+                htmlDataToCopy = data
             }
-        } else if mime == "text/html" {
-            htmlDataToCopy = data
         } else if mime == "image/png" {
-            pngDataToCopy = data
+            if pngDataToCopy == nil {
+                pngDataToCopy = data
+            }
+        } else if mime == "text/plain" || mime.hasPrefix("text/plain;") {
+            if textToCopy == nil, let str = String(data: data, encoding: .utf8) {
+                textToCopy = str
+            }
         }
     }
     
@@ -292,8 +311,14 @@ private func ghostty_write_clipboard_callback(
         // we deny the write — never silently overwrite the user's clipboard on
         // behalf of a program (OSC 52 clipboard-hijack protection).
         if confirm {
-            let approved = GhosttyRuntime.shared.clipboardWriteConfirmationHandler?(textToCopy ?? "") ?? false
-            guard approved else { return }
+            guard let text = textToCopy,
+                  GhosttyRuntime.shared.clipboardWriteConfirmationHandler?(text) == true else {
+                return
+            }
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+            return
         }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -502,31 +527,43 @@ private func ghostty_action_callback(
     case GHOSTTY_ACTION_OPEN_URL:
         let openUrl = action.action.open_url
         guard let urlPtr = openUrl.url, openUrl.len > 0,
-              let urlStr = String(bytes: UnsafeRawBufferPointer(start: urlPtr, count: Int(openUrl.len)), encoding: .utf8),
-              let url = URL(string: urlStr),
-              let scheme = url.scheme?.lowercased() else {
-            return false
+              let urlStr = String(bytes: UnsafeRawBufferPointer(start: urlPtr, count: Int(openUrl.len)), encoding: .utf8) else {
+            return true
         }
 
-        let isAllowedScheme: Bool
+        // Reject any URL containing ASCII control characters
+        guard !urlStr.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }) else {
+            return true
+        }
+
+        guard let url = URL(string: urlStr),
+              let scheme = url.scheme?.lowercased(),
+              url.user == nil,
+              url.password == nil else {
+            return true
+        }
+
         switch scheme {
         case "http", "https", "mailto":
-            isAllowedScheme = true
+            DispatchQueue.main.async {
+                NSWorkspace.shared.open(url)
+            }
+            return true
+
         case "file":
-            isAllowedScheme = (openUrl.kind == GHOSTTY_ACTION_OPEN_URL_KIND_TEXT ||
-                               openUrl.kind == GHOSTTY_ACTION_OPEN_URL_KIND_HTML)
+            // Only allow plain-text auto-detected URLs, never OSC 8 or unknown kinds
+            guard openUrl.kind == GHOSTTY_ACTION_OPEN_URL_KIND_TEXT else { return true }
+            DispatchQueue.main.async {
+                if let textEditor = NSWorkspace.shared.defaultApplicationURL(forExtension: url.pathExtension)
+                    ?? NSWorkspace.shared.defaultApplicationURL(for: .plainText) {
+                    NSWorkspace.shared.open([url], withApplicationAt: textEditor, configuration: NSWorkspace.OpenConfiguration())
+                }
+            }
+            return true
+
         default:
-            isAllowedScheme = false
+            return true
         }
-
-        guard isAllowedScheme else {
-            return false
-        }
-
-        DispatchQueue.main.async {
-            NSWorkspace.shared.open(url)
-        }
-        return true
 
     default:
         return false
