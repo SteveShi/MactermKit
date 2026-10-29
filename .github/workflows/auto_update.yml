@@ -134,8 +134,8 @@ jobs:
                   ),
                   .binaryTarget(
                       name: "MactermKitCore",
-                      url: "https://github.com/SteveShi/MactermKit/releases/download/\${NEXT_PKG_VERSION}/MactermKitCore.xcframework.zip",
-                      checksum: "\${CHECKSUM}"
+                      url: "https://github.com/SteveShi/MactermKit/releases/download/${NEXT_PKG_VERSION}/MactermKitCore.xcframework.zip",
+                      checksum: "${CHECKSUM}"
                   )
               ]
           )
