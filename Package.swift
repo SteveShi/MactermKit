@@ -8,8 +8,8 @@ let package = Package(
     ],
     products: [
         .library(
-            name: "MactermKit",
-            targets: ["MactermKit"]
+  name: "MactermKit",
+  targets: ["MactermKit"]
         )
     ],
     dependencies: [
@@ -17,16 +17,16 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "MactermKit",
-            dependencies: [
-                "MactermKitCore",
-                .product(name: "MSDisplayLink", package: "MSDisplayLink")
-            ]
+  name: "MactermKit",
+  dependencies: [
+      "MactermKitCore",
+      .product(name: "MSDisplayLink", package: "MSDisplayLink")
+  ]
         ),
         .binaryTarget(
-            name: "MactermKitCore",
-            url: "https://github.com/SteveShi/MactermKit/releases/download/v1.0.28/MactermKitCore.xcframework.zip",
-            checksum: "a20e6150d7cb016ea417e554842ab259de9880c2d92d2dcfc5c89582f4a90a34"
+  name: "MactermKitCore",
+  url: "https://github.com/SteveShi/MactermKit/releases/download/${NEXT_PKG_VERSION}/MactermKitCore.xcframework.zip",
+  checksum: "${CHECKSUM}"
         )
     ]
 )
